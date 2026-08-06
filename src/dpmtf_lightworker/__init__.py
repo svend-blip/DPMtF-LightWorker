@@ -63,6 +63,7 @@ from dpmtf_lightworker.models import (
     ResultContract,
     ResultMode,
 )
+from dpmtf_lightworker.safe_paths import redact, resolve_within
 from dpmtf_lightworker.states import WorkerState
 from dpmtf_lightworker.tmux_session import TmuxSession
 
@@ -94,7 +95,9 @@ __all__ = [
     "PathsSection",
     "RepositoryFetchFailed",
     "RepositoryRef",
+    "redact",
     "render_execution_config",
+    "resolve_within",
     "ResultContract",
     "ResultMode",
     "RetentionSection",
