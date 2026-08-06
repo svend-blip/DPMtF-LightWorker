@@ -1,0 +1,40 @@
+# DPMtF-LightWorker example configuration (GOAL.md §12).
+#
+# This file is the §12 example. It is shipped as the example so a
+# developer can copy it to worker.yaml and fill in environment-variable
+# names that the deployment script exports. Committed configuration
+# must contain environment-variable names rather than machine-specific
+# absolute paths (§12 closing line).
+
+worker:
+  id: svend3060
+  display_name: RTX 3060 LightWorker
+  max_parallel_executions: 1
+  poll_interval_seconds: 10
+  heartbeat_interval_seconds: 15
+
+father:
+  base_url: http://main5090:9130
+  request_timeout_seconds: 30
+
+network:
+  type: tailscale
+  expected_father_host: main5090
+
+allocator:
+  command: model-allocator
+  client: opencode
+  config_root: ${MODEL_ALLOCATOR_CONFIG_ROOT}
+
+paths:
+  repository_root: ${LIGHTWORKER_REPOSITORY_ROOT}
+  worktree_root: ${LIGHTWORKER_WORKTREE_ROOT}
+  artifact_root: ${LIGHTWORKER_ARTIFACT_ROOT}
+  log_root: ${LIGHTWORKER_LOG_ROOT}
+  opencode_config_root: ${LIGHTWORKER_OPENCODE_CONFIG_ROOT}
+
+retention:
+  successful_worktree_hours: 1
+  failed_worktree_days: 7
+  artifact_days: 14
+  log_days: 30
