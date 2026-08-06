@@ -6,6 +6,7 @@ returns an immutable dataclass that downstream code can consume without
 re-checking any field.
 """
 
+from dpmtf_lightworker.allocator import AllocatorAdapter
 from dpmtf_lightworker.config import (
     AllocatorSection,
     ConfigPath,
@@ -19,8 +20,14 @@ from dpmtf_lightworker.config import (
     load_config,
 )
 from dpmtf_lightworker.errors import (
+    AliasValidationFailed,
+    AllocatorError,
+    AllocatorNotAvailable,
+    AllocatorPreflightFailed,
+    ClientConfigRenderFailed,
     EnvelopeError,
     InvalidExecutionEnvelope,
+    RuntimeReleaseFailed,
     UnsupportedClient,
     UnsupportedModelSource,
     UnsupportedSchemaVersion,
@@ -46,7 +53,13 @@ from dpmtf_lightworker.models import (
 from dpmtf_lightworker.states import WorkerState
 
 __all__ = [
+    "AliasValidationFailed",
+    "AllocatorAdapter",
+    "AllocatorError",
+    "AllocatorNotAvailable",
+    "AllocatorPreflightFailed",
     "AllocatorSection",
+    "ClientConfigRenderFailed",
     "ConfigPath",
     "EnvelopeError",
     "Event",
@@ -63,6 +76,7 @@ __all__ = [
     "ResultContract",
     "ResultMode",
     "RetentionSection",
+    "RuntimeReleaseFailed",
     "Transport",
     "UnsupportedClient",
     "UnsupportedModelSource",

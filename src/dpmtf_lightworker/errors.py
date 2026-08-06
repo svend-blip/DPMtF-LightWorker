@@ -1,9 +1,7 @@
-"""Failure categories for the envelope layer.
+"""Failure categories for the envelope and allocator layers.
 
 The category strings are the contract required by GOAL.md §24; they are
-read by structured result reporters and never localised. This handoff
-defines only the five categories raised by the envelope layer. The other
-twenty-four categories in §24 belong to layers that do not exist yet.
+read by structured result reporters and never localised.
 """
 
 from __future__ import annotations
@@ -71,11 +69,68 @@ class UnsupportedClient(EnvelopeError):
     category = "UNSUPPORTED_CLIENT"
 
 
+class AllocatorError(EnvelopeError):
+    """Base class for failures returned by the allocator adapter."""
+
+    category = "ALLOCATOR_NOT_AVAILABLE"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: Optional[str] = None,
+        returncode: Optional[int] = None,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        super().__init__(message, field=field)
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class AllocatorNotAvailable(AllocatorError):
+    """The allocator command could not be invoked or returned unusable output."""
+
+    category = "ALLOCATOR_NOT_AVAILABLE"
+
+
+class AllocatorPreflightFailed(AllocatorError):
+    """The allocator rejected preflight for a role and client."""
+
+    category = "ALLOCATOR_PREFLIGHT_FAILED"
+
+
+class AliasValidationFailed(AllocatorError):
+    """The allocator rejected an alias and client combination."""
+
+    category = "ALIAS_VALIDATION_FAILED"
+
+
+class ClientConfigRenderFailed(AllocatorError):
+    """The allocator failed to render client configuration."""
+
+    category = "CLIENT_CONFIG_RENDER_FAILED"
+
+
+class RuntimeReleaseFailed(AllocatorError):
+    """The allocator failed to release a runtime."""
+
+    category = "RUNTIME_RELEASE_FAILED"
+
+
 __all__ = [
+    "AliasValidationFailed",
+    "AllocatorError",
+    "AllocatorNotAvailable",
+    "AllocatorPreflightFailed",
+    "ClientConfigRenderFailed",
     "EnvelopeError",
     "InvalidExecutionEnvelope",
+    "RuntimeReleaseFailed",
     "UnsupportedClient",
     "UnsupportedModelSource",
     "UnsupportedSchemaVersion",
     "WorkerMismatch",
 ]
+
