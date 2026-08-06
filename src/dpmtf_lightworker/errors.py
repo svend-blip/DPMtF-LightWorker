@@ -119,18 +119,67 @@ class RuntimeReleaseFailed(AllocatorError):
     category = "RUNTIME_RELEASE_FAILED"
 
 
+class GitError(EnvelopeError):
+    """Base class for failures returned by the git workspace layer."""
+
+    category = "REPOSITORY_FETCH_FAILED"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: Optional[str] = None,
+        returncode: Optional[int] = None,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        super().__init__(message, field=field)
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class RepositoryFetchFailed(GitError):
+    """The git fetch or mirror clone could not complete."""
+
+    category = "REPOSITORY_FETCH_FAILED"
+
+
+class BaseCommitNotFound(GitError):
+    """The given base commit SHA does not exist in the mirror."""
+
+    category = "BASE_COMMIT_NOT_FOUND"
+
+
+class WorktreeCreationFailed(GitError):
+    """A git worktree could not be created at the requested base commit."""
+
+    category = "WORKTREE_CREATION_FAILED"
+
+
+class PatchGenerationFailed(GitError):
+    """A binary-safe patch could not be generated from the worktree."""
+
+    category = "PATCH_GENERATION_FAILED"
+
+
 __all__ = [
     "AliasValidationFailed",
     "AllocatorError",
     "AllocatorNotAvailable",
     "AllocatorPreflightFailed",
+    "BaseCommitNotFound",
     "ClientConfigRenderFailed",
     "EnvelopeError",
+    "GitError",
     "InvalidExecutionEnvelope",
+    "PatchGenerationFailed",
+    "RepositoryFetchFailed",
     "RuntimeReleaseFailed",
     "UnsupportedClient",
     "UnsupportedModelSource",
     "UnsupportedSchemaVersion",
     "WorkerMismatch",
+    "WorktreeCreationFailed",
 ]
 
