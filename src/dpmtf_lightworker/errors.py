@@ -163,6 +163,24 @@ class PatchGenerationFailed(GitError):
     category = "PATCH_GENERATION_FAILED"
 
 
+class TmuxStartFailed(EnvelopeError):
+    """A tmux session could not be created for an execution."""
+
+    category = "TMUX_START_FAILED"
+
+
+class ClientStartFailed(EnvelopeError):
+    """The client launch command could not be started in its tmux session."""
+
+    category = "CLIENT_START_FAILED"
+
+
+class HandoffInjectionFailed(EnvelopeError):
+    """The compiled handoff could not be injected into the tmux session."""
+
+    category = "HANDOFF_INJECTION_FAILED"
+
+
 __all__ = [
     "AliasValidationFailed",
     "AllocatorError",
@@ -170,12 +188,15 @@ __all__ = [
     "AllocatorPreflightFailed",
     "BaseCommitNotFound",
     "ClientConfigRenderFailed",
+    "ClientStartFailed",
     "EnvelopeError",
     "GitError",
+    "HandoffInjectionFailed",
     "InvalidExecutionEnvelope",
     "PatchGenerationFailed",
     "RepositoryFetchFailed",
     "RuntimeReleaseFailed",
+    "TmuxStartFailed",
     "UnsupportedClient",
     "UnsupportedModelSource",
     "UnsupportedSchemaVersion",

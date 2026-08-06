@@ -7,6 +7,10 @@ re-checking any field.
 """
 
 from dpmtf_lightworker.allocator import AllocatorAdapter
+from dpmtf_lightworker.client_config import (
+    render_execution_config,
+    validate_rendered_config,
+)
 from dpmtf_lightworker.config import (
     AllocatorSection,
     ConfigPath,
@@ -26,12 +30,15 @@ from dpmtf_lightworker.errors import (
     AllocatorPreflightFailed,
     BaseCommitNotFound,
     ClientConfigRenderFailed,
+    ClientStartFailed,
     EnvelopeError,
     GitError,
+    HandoffInjectionFailed,
     InvalidExecutionEnvelope,
     PatchGenerationFailed,
     RepositoryFetchFailed,
     RuntimeReleaseFailed,
+    TmuxStartFailed,
     UnsupportedClient,
     UnsupportedModelSource,
     UnsupportedSchemaVersion,
@@ -57,6 +64,7 @@ from dpmtf_lightworker.models import (
     ResultMode,
 )
 from dpmtf_lightworker.states import WorkerState
+from dpmtf_lightworker.tmux_session import TmuxSession
 
 __all__ = [
     "AliasValidationFailed",
@@ -67,6 +75,7 @@ __all__ = [
     "AllocatorSection",
     "BaseCommitNotFound",
     "ClientConfigRenderFailed",
+    "ClientStartFailed",
     "ConfigPath",
     "EnvelopeError",
     "Event",
@@ -77,6 +86,7 @@ __all__ = [
     "FatherSection",
     "GitError",
     "GitWorkspace",
+    "HandoffInjectionFailed",
     "HandoffPayload",
     "InvalidExecutionEnvelope",
     "NetworkSection",
@@ -84,14 +94,19 @@ __all__ = [
     "PathsSection",
     "RepositoryFetchFailed",
     "RepositoryRef",
+    "render_execution_config",
     "ResultContract",
     "ResultMode",
     "RetentionSection",
     "RuntimeReleaseFailed",
+    "TmuxSession",
+    "TmuxStartFailed",
     "Transport",
     "UnsupportedClient",
     "UnsupportedModelSource",
     "UnsupportedSchemaVersion",
+    "validate_envelope",
+    "validate_rendered_config",
     "ValidatorConfig",
     "WorkerConfig",
     "WorkerConfigError",
@@ -100,5 +115,4 @@ __all__ = [
     "WorkerState",
     "WorktreeCreationFailed",
     "load_config",
-    "validate_envelope",
 ]
