@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dpmtf-lightworker"
+version = "0.1.0"
+description = "Lightweight remote role-execution node for DPMtF"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [{name = "svend3060"}]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]
