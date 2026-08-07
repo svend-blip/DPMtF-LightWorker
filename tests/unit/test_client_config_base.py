@@ -126,3 +126,45 @@ def test_mcp_is_not_required():
 def test_a_config_without_permission_is_still_refused():
     with pytest.raises(ClientConfigRenderFailed):
         validate_rendered_config(json.dumps({"model": "m", "provider": {}}))
+
+
+class TestTheMergeIsDeep:
+    """The allocator replaces `provider.<name>` wholesale.
+
+    Measured on svend3060: a base carrying `provider.ollama.options.baseURL`
+    came back with only `provider.ollama.models`, and OpenCode then failed
+    with `"undefined/chat/completions" cannot be parsed as a URL` -- the
+    endpoint the machine configured had been dropped while adding the model
+    the role needed. Both belong in the same object and neither side knows
+    about the other.
+    """
+
+    def test_the_provider_endpoint_survives_the_model_being_added(self, tmp_path):
+        base = _base(tmp_path, {
+            "permission": {},
+            "provider": {"ollama": {
+                "npm": "@ai-sdk/openai-compatible",
+                "options": {"baseURL": "http://localhost:11434/v1"},
+            }},
+        })
+        target = tmp_path / "opencode.json"
+        render_execution_config(
+            MergingAllocator(), "imple01LW", str(target), base, "/w")
+        ollama = json.loads(target.read_text(encoding="utf-8"))["provider"]["ollama"]
+        assert ollama["options"]["baseURL"] == "http://localhost:11434/v1"
+        assert ollama["npm"] == "@ai-sdk/openai-compatible"
+
+    def test_the_allocator_wins_a_genuine_conflict(self):
+        """§32 makes the model and its context the allocator's to decide. A
+        base config must not be able to quietly pin an older one."""
+        from dpmtf_lightworker.client_config import _deep_merge
+        merged = _deep_merge({"model": "stale", "provider": {"o": {"a": 1}}},
+                             {"model": "fresh", "provider": {"o": {"b": 2}}})
+        assert merged["model"] == "fresh"
+        assert merged["provider"]["o"] == {"a": 1, "b": 2}
+
+    def test_a_list_replaces_rather_than_extends(self):
+        """An allowlist that silently grew by concatenation would be worse
+        than one that is simply stated."""
+        from dpmtf_lightworker.client_config import _deep_merge
+        assert _deep_merge({"k": [1, 2]}, {"k": [3]})["k"] == [3]

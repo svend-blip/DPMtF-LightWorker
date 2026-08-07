@@ -116,7 +116,11 @@ def test_render_execution_config_returns_published_path(
     # client=opencode, and the target file holds the rendered body.
     assert allocator.calls and allocator.calls[0]["role"] == "imple01"
     assert allocator.calls[0]["client"] == "opencode"
-    assert target.read_text(encoding="utf-8") == _valid_body()
+    # Compared as JSON, not as bytes. The published file is re-serialised so
+    # the base config can be merged underneath it, so formatting is not
+    # preserved -- the config is the value, its whitespace is not.
+    assert json.loads(target.read_text(encoding="utf-8")) == json.loads(
+        _valid_body())
 
 
 def test_render_execution_config_calls_allocator_with_keyword_arguments(

@@ -71,6 +71,31 @@ def _load_base_config(base_config_path: str, worktree: str) -> dict:
     return dict(data)
 
 
+def _deep_merge(base: Mapping, override: Mapping) -> dict:
+    """Merge ``override`` onto ``base``, recursing into nested objects.
+
+    A shallow merge is what the allocator does, and it is why this exists:
+    replacing `provider.ollama` wholesale drops the endpoint the machine
+    configured while adding the model the role needs. Both belong in the
+    same object and neither side knows about the other.
+
+    ``override`` wins every conflict. A list replaces rather than extends —
+    an allowlist that silently grew by concatenation would be worse than
+    one that is simply stated.
+    """
+    out = dict(base)
+    for key, value in override.items():
+        if (
+            key in out
+            and isinstance(out[key], Mapping)
+            and isinstance(value, Mapping)
+        ):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
 def render_execution_config(
     allocator: "AllocatorAdapter",
     role: str,
@@ -118,15 +143,6 @@ def render_execution_config(
     tmp_path = tmp_dir / target.name
     tmp_name = str(tmp_path)
     try:
-        # Seed the temp path with the operator's base config so the allocator
-        # has something to merge into. An empty directory made `render-config`
-        # succeed and produce only `model` and `provider` — a config with no
-        # permission block, which §19 makes load-bearing.
-        if base_config_path:
-            base = _load_base_config(base_config_path, worktree)
-            tmp_path.write_text(
-                json.dumps(base, indent=2) + "\n", encoding="utf-8"
-            )
         try:
             allocator.render_config(
                 role=role, client="opencode", output=tmp_name
@@ -137,7 +153,29 @@ def render_execution_config(
             raise ClientConfigRenderFailed(
                 f"allocator did not write a config to {tmp_path}"
             )
-        text = tmp_path.read_text(encoding="utf-8")
+        rendered = json.loads(tmp_path.read_text(encoding="utf-8"))
+
+        # The base config goes UNDERNEATH what the allocator produced.
+        #
+        # Seeding it first and letting `render-config` merge into it was the
+        # obvious order and it loses data: the allocator replaces
+        # `provider.<name>` wholesale rather than merging within it. Measured
+        # on svend3060 — a base carrying `provider.ollama.options.baseURL`
+        # came back with only `provider.ollama.models`, and OpenCode then
+        # failed with:
+        #
+        #   "undefined/chat/completions" cannot be parsed as a URL.
+        #
+        # Merging here instead makes the worker's own semantics the ones that
+        # matter: deep, with the allocator winning every conflict. It renders
+        # the model and its limits (§32); the base supplies everything about
+        # this machine — the permission block, the provider endpoint, any mcp.
+        if base_config_path:
+            base = _load_base_config(base_config_path, worktree)
+            rendered = _deep_merge(base, rendered)
+
+        text = json.dumps(rendered, indent=2) + "\n"
+        tmp_path.write_text(text, encoding="utf-8")
         # Validate before publishing: a config that fails validation must
         # never have existed at the target path. This is the §33 ordering
         # and the property the testgoal cannot measure.
