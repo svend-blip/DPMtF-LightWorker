@@ -200,3 +200,42 @@ class TestTheClientIsReadyBeforeTheHandoffGoesIn:
         loop.run_once()
         assert spies["father"].failed == 1
         assert "inject" not in spies["tmux"].calls
+
+
+class TestTheRoleCanReadItsOwnGovernance:
+    """Father compiles the governance into every envelope and the worker
+    discarded it.
+
+    Every handoff opens with "Read 481_LIGHTWORKER_IMPLE01LW.md -- it is in
+    this envelope", and the file was nowhere on the machine. EXEC-009 is what
+    that costs: the model looked for its role definition, did not find it,
+    and improvised. The pane's objective had drifted to "conduct a security
+    audit", which appears in no handoff ever sent.
+
+    Written as a file rather than injected: the whole governance document
+    plus the handoff does not fit in an 8k window.
+    """
+
+    def test_the_governance_lands_in_the_worktree(self):
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        worktree = Path(spies["git"]._worktree_root) / "EXEC-1-IMPLE01"
+        written = list(worktree.glob(".lightworker/*governance*.md"))
+        assert written, "the governance was carried and thrown away"
+        assert "compiled governance body" in written[0].read_text(
+            encoding="utf-8")
+
+    def test_the_role_is_told_where_it_is(self):
+        """A file the role cannot find is the same as no file."""
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        assert ".lightworker/" in spies["tmux"].injected[-1]
+
+    def test_an_envelope_without_governance_still_runs(self):
+        """Not every role has one, and a missing governance is not a reason
+        to refuse work that already arrived."""
+        env = envelope()
+        env["handoff"]["governance_content"] = ""
+        loop, spies = loop_with(offered=env)
+        assert loop.run_once() is True
+        assert "<governance>" not in spies["tmux"].injected[-1]

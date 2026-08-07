@@ -640,7 +640,9 @@ class WorkerLoop:
         try:
             self._tmux.inject(
                 session_name,
-                self._handoff_with_deliverable_path(envelope),
+                self._handoff_with_deliverable_path(
+                    envelope, self._write_governance(worktree_str, envelope)
+                ),
             )
         except EnvelopeError as exc:
             self._report_failure(
@@ -921,8 +923,50 @@ class WorkerLoop:
             model_source=SUPPORTED_MODEL_SOURCE,
         )
 
-    def _handoff_with_deliverable_path(self, envelope: Any) -> str:
-        """The compiled handoff, plus the one thing only the worker knows.
+    def _write_governance(self, worktree: str, envelope: Any) -> str:
+        """Put the role's governance where the role can read it.
+
+        Father compiles it into every envelope — §19 is explicit that Father
+        sends the content rather than granting the worker a path into its
+        tree — and the worker discarded it. Every handoff opened with "Read
+        481_LIGHTWORKER_IMPLE01LW.md — it is in this envelope", and the file
+        was nowhere on the machine.
+
+        EXEC-009 is what that costs. The model looked for its role
+        definition, did not find it, and improvised: the pane's objective had
+        drifted to "conduct a security audit", which appears in no handoff
+        ever sent.
+
+        Written as a file rather than injected, because the whole governance
+        document plus the handoff does not fit in an 8k window. The role
+        reads it if it needs it.
+
+        Returns the relative path, or "" when the envelope carries none.
+        """
+        content = getattr(envelope.handoff, "governance_content", "") or ""
+        if not content.strip():
+            return ""
+        relative = f".lightworker/{envelope.target_role}-governance.md"
+        target = Path(worktree) / relative
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            # Not fatal. A role without its governance is worse off, but a
+            # role with no work at all is worse still, and the handoff itself
+            # already arrived.
+            sys.stderr.write(
+                f"dpmtf-lightworker: could not write governance to "
+                f"{target}: {exc}\n"
+            )
+            sys.stderr.flush()
+            return ""
+        return relative
+
+    def _handoff_with_deliverable_path(
+        self, envelope: Any, governance_path: str = ""
+    ) -> str:
+        """The compiled handoff, plus the things only the worker knows.
 
         The wait watches ``<worktree>/<expected_deliverable>``, so the role
         has to write exactly there. Father compiles the handoff and knows the
@@ -935,9 +979,19 @@ class WorkerLoop:
         worth spending on where the answer goes.
         """
         relative = envelope.handoff.expected_deliverable
+        governance = ""
+        if governance_path:
+            governance = (
+                "<governance>\n"
+                f"Your role definition is at `{governance_path}`, relative to\n"
+                "the root of your worktree. The handoff refers to it by its\n"
+                "governance number; that file is it.\n"
+                "</governance>\n\n"
+            )
         return (
             f"{envelope.handoff.content.rstrip()}\n\n"
-            "<deliverable>\n"
+            + governance
+            + "<deliverable>\n"
             f"Write your deliverable to `{relative}`, relative to the root of\n"
             "your worktree, which is the directory this session started in.\n"
             "Create the directories if they are missing.\n\n"
