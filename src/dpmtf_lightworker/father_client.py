@@ -196,6 +196,25 @@ class FatherClient:
         self._claimed[execution_id] = response
         return response
 
+    def upload_artifact(self, data: bytes) -> str:
+        """POST /api/lightworkers/artifacts; returns the content's sha256.
+
+        Content-addressed: the server verifies the declared hash against
+        the decoded bytes and stores under that name, so a re-upload of
+        identical bytes is a no-op and the returned sha IS the reference a
+        result carries instead of inline content.
+        """
+        import base64
+        import hashlib
+        sha = hashlib.sha256(data).hexdigest()
+        body = {
+            "worker_id": self._worker_id,
+            "sha256": sha,
+            "content_b64": base64.b64encode(data).decode("ascii"),
+        }
+        self._transport("POST", "/api/lightworkers/artifacts", body)
+        return sha
+
     def execution_heartbeat(self, execution_id: str, *, attempt_id: str) -> Any:
         """POST /api/lightworkers/executions/{execution_id}/heartbeat.
 

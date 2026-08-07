@@ -164,6 +164,12 @@ DELIVERABLE_POLL_SECONDS: float = 5.0
 CLIENT_READY_MARKER: str = "Ask anything"
 CLIENT_READY_TIMEOUT_SECONDS: float = 120.0
 
+# A deliverable (or patch) above this travels as a §23 artifact reference
+# instead of inline in the result JSON. A quarter megabyte is far beyond any
+# reviewable document and far below anything that strains a JSON body -- the
+# limit exists so the choice is a rule, not a per-call judgement.
+INLINE_CONTENT_MAX_BYTES: int = 256 * 1024
+
 
 # ---------------------------------------------------------------------------
 # Render-callable type — the Mission Contract injects
@@ -798,14 +804,28 @@ class WorkerLoop:
         # The content travels inline: this version has no artifact transfer,
         # so a result naming a path Father cannot reach is a result Father
         # cannot use.
+        deliverable_block: dict = {
+            "path": envelope.handoff.expected_deliverable,
+            "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+        raw = content.encode("utf-8")
+        if len(raw) <= INLINE_CONTENT_MAX_BYTES:
+            deliverable_block["content"] = content
+        else:
+            # Too large for the result JSON: upload first, reference by
+            # hash (§23 artifact_reference). If the upload fails, fall
+            # back to inline -- an oversized result Father may still take
+            # beats a reference to an artifact that never arrived.
+            try:
+                deliverable_block["artifact_sha256"] = \
+                    self._father.upload_artifact(raw)
+            except Exception:  # noqa: BLE001
+                deliverable_block["content"] = content
+
         result = {
             "status": "role_execution_completed",
             "result_mode": envelope.result_contract.mode.value,
-            "deliverable": {
-                "path": envelope.handoff.expected_deliverable,
-                "content": content,
-                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            },
+            "deliverable": deliverable_block,
             "patch": patch_text,
         }
 
