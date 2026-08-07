@@ -134,12 +134,24 @@ def test_alias_passed_through_unchanged_for_stop() -> None:
 
 
 def test_runner_receives_list_and_timeout() -> None:
+    """The configured timeout applies to the FAST operations. preflight and
+    run get a fixed 600s instead -- they may have to cold-start a model
+    server, and EXEC-016 died at 30.0s doing exactly that. A slow resolve
+    or stop is still a defect worth surfacing fast."""
     runner = FakeRunner(response=(0, "ok", ""))
     adapter = AllocatorAdapter(command="model-allocator", runner=runner, timeout=4.2)
-    adapter.preflight("r", "c")
+    adapter.validate_alias("a", "c")
     argv, timeout = runner.calls[0]
     assert isinstance(argv, list)
     assert timeout == 4.2
+
+
+def test_preflight_and_run_get_cold_start_time() -> None:
+    runner = FakeRunner(response=(0, "ok", ""))
+    adapter = AllocatorAdapter(command="model-allocator", runner=runner, timeout=4.2)
+    adapter.preflight("r", "c")
+    adapter.run("r", "c")
+    assert [t for _, t in runner.calls] == [600.0, 600.0]
 
 
 # ---------------------------------------------------------------------------
