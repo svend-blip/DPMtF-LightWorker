@@ -93,3 +93,100 @@ def test_preflight_does_not_leak_secrets() -> None:
     combined = (completed.stdout or "") + (completed.stderr or "")
     assert combined, "preflight produced no output at all"
     assert "TESTSECRET" not in combined, combined
+
+
+def _run_in(repo_root: Path, env_extra: dict | None = None) -> dict:
+    """Run preflight against a fixture tree.
+
+    The script derives its own repo root from `dirname $0/..`, so the only
+    way to point it at a fixture is to put it there. An env override does
+    nothing — rehearse the mechanism, not a stand-in for it.
+    """
+    scripts = repo_root / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copy(REPO_ROOT / "scripts" / "preflight.sh", scripts / "preflight.sh")
+    env = dict(os.environ)
+    env.update(env_extra or {})
+    out = subprocess.run(
+        ["bash", str(scripts / "preflight.sh"), "--json"],
+        capture_output=True, text=True, env=env, timeout=120,
+    )
+    return {c["name"]: c for c in json.loads(out.stdout)["checks"]}
+
+
+def _fixture_repo(tmp_path: Path, *, worker_yaml: str | None,
+                  example: bool = True) -> Path:
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    if example:
+        (tmp_path / "config" / "worker.example.yaml").write_text(
+            "father:\n  base_url: http://main5090:9130\n"
+            "network:\n  expected_father_host: main5090\n", encoding="utf-8")
+    if worker_yaml is not None:
+        (tmp_path / "config" / "worker.yaml").write_text(worker_yaml, encoding="utf-8")
+    return tmp_path
+
+
+class ChecksMustNotClaimMoreThanTheyMeasure:
+    """All three defects here were found by the first real run on svend3060.
+
+    Each check reported a cause it had not tested. A wrong *reason* is worse
+    than a wrong result: it sends the next person after a problem that does
+    not exist. One of these had a reader reinstalling a tool that worked.
+    """
+
+
+def test_the_example_config_is_not_a_configuration(tmp_path: Path) -> None:
+    """`worker.example.yaml` is committed, so accepting it made this check
+    unable to fail — it passed on a machine with no configuration at all."""
+    checks = _run_in(_fixture_repo(tmp_path, worker_yaml=None))
+    assert checks["worker_configuration"]["status"] == "fail", \
+        "an example config was accepted as a configuration"
+
+
+def test_a_real_worker_yaml_passes(tmp_path: Path) -> None:
+    checks = _run_in(_fixture_repo(tmp_path, worker_yaml="father:\n  base_url: http://127.0.0.1:1\n"))
+    assert checks["worker_configuration"]["status"] == "pass"
+
+
+def test_father_check_does_not_fall_back_to_the_example(tmp_path: Path) -> None:
+    """With no worker.yaml the reason must name the missing config.
+
+    It used to read the example's `main5090`, fail to resolve it, and report
+    the Father unreachable — on a machine where `curl /api/health` returned
+    200.
+    """
+    checks = _run_in(_fixture_repo(tmp_path, worker_yaml=None))
+    reason = checks["father_reachability"]["reason"]
+    assert "worker.yaml" in reason, f"reason blames the wrong thing: {reason}"
+    assert "main5090" not in reason, "the example's placeholder host leaked in"
+
+
+def test_father_check_reports_no_answer_rather_than_no_resolution(tmp_path: Path) -> None:
+    """Named 'reachability', it must test whether Father answers.
+
+    Port 1 on loopback resolves perfectly and answers nothing.
+    """
+    repo = _fixture_repo(tmp_path, worker_yaml="father:\n  base_url: http://127.0.0.1:1\n")
+    checks = _run_in(repo)
+    assert checks["father_reachability"]["status"] == "fail"
+    assert "answer" in checks["father_reachability"]["reason"]
+
+
+def test_absent_and_broken_allocator_give_different_reasons(tmp_path: Path) -> None:
+    """`--version` is not a flag that CLI has; it exits 2. Reporting that as
+    'not found on PATH' sent a reader to reinstall a working binary."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    # on PATH, but exits non-zero for every invocation
+    (fake_bin / "model-allocator").write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+    (fake_bin / "model-allocator").chmod(0o755)
+    repo = _fixture_repo(tmp_path, worker_yaml="father:\n  base_url: http://127.0.0.1:1\n")
+
+    broken = _run_in(repo, {"PATH": f"{fake_bin}:{os.environ['PATH']}"})["model_allocator_command"]
+    assert broken["status"] == "fail"
+    assert "not found on PATH" not in broken["reason"], \
+        "a present-but-broken allocator was reported as absent"
+    assert "on PATH" in broken["reason"]
+
+    absent = _run_in(repo, {"PATH": "/usr/bin:/bin"})["model_allocator_command"]
+    assert "not found on PATH" in absent["reason"]

@@ -89,27 +89,38 @@ else
 fi
 
 # 5. Father reachability
-FATHER_HOST=""
+#
+# Asks whether Father ANSWERS, not whether its name resolves. This ran
+# `getent hosts` and reported "reachability" — named for one thing, measuring
+# another. On svend3060, 2026-08-07, it declared Father unreachable while
+# `curl /api/health` on that same machine returned 200: the name in the config
+# did not exist, but the service did.
+#
+# It reads only worker.yaml. The example ships `base_url: http://main5090:9130`,
+# a host that exists nowhere, so falling back to it turned a missing config
+# into a confident false report about a live service.
+FATHER_URL=""
 if [ -f "$REPO_ROOT/config/worker.yaml" ]; then
-    FATHER_HOST=$(grep -E '^[[:space:]]*expected_father_host' "$REPO_ROOT/config/worker.yaml" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*([^"#[:space:]]+).*/\1/' || true)
-elif [ -f "$REPO_ROOT/config/worker.example.yaml" ]; then
-    FATHER_HOST=$(grep -E '^[[:space:]]*expected_father_host' "$REPO_ROOT/config/worker.example.yaml" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*([^"#[:space:]]+).*/\1/' || true)
+    FATHER_URL=$(grep -E '^[[:space:]]*base_url' "$REPO_ROOT/config/worker.yaml" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*([^"#[:space:]]+).*/\1/' || true)
 fi
-if [ -n "$FATHER_HOST" ]; then
-    if try_silent getent hosts "$FATHER_HOST"; then
-        emit_check "father_reachability" "pass" "true" "father host $FATHER_HOST resolves"
-    else
-        emit_check "father_reachability" "fail" "true" "father host $FATHER_HOST does not resolve"
-    fi
+if [ -z "$FATHER_URL" ]; then
+    emit_check "father_reachability" "fail" "true" "no base_url in config/worker.yaml"
+elif try_silent curl -s -m 5 -f "$FATHER_URL/api/health"; then
+    emit_check "father_reachability" "pass" "true" "father answered /api/health at $FATHER_URL"
 else
-    emit_check "father_reachability" "warn" "false" "no expected_father_host configured"
+    emit_check "father_reachability" "fail" "true" "father did not answer /api/health at $FATHER_URL"
 fi
 
 # 6. Worker configuration
-if [ -f "$REPO_ROOT/config/worker.yaml" ] || [ -f "$REPO_ROOT/config/worker.example.yaml" ]; then
-    emit_check "worker_configuration" "pass" "true" "worker configuration file present"
+#
+# `config/worker.example.yaml` is committed, so accepting it made this check
+# unable to fail: it passed on a machine with no configuration at all, and
+# then fed its placeholder hostname to the Father check above. A template is
+# not a configuration.
+if [ -f "$REPO_ROOT/config/worker.yaml" ]; then
+    emit_check "worker_configuration" "pass" "true" "config/worker.yaml present"
 else
-    emit_check "worker_configuration" "fail" "true" "no worker.yaml or worker.example.yaml found"
+    emit_check "worker_configuration" "fail" "true" "no config/worker.yaml — copy worker.example.yaml and fill it in"
 fi
 
 # 7. Worker authentication — report that the credential is set,
@@ -121,10 +132,18 @@ else
 fi
 
 # 8. Model Allocator command
-if try_silent model-allocator --version; then
-    emit_check "model_allocator_command" "pass" "true" "model-allocator on PATH"
-else
+#
+# Absent and present-but-broken are different faults and get different
+# reasons. This ran `model-allocator --version`, which that CLI does not
+# support — it requires a subcommand and exits 2 — and reported the failure as
+# "not found on PATH". Measured on svend3060, 2026-08-07: the binary was on
+# PATH and working, and preflight sent the reader to reinstall it.
+if ! try_silent command -v model-allocator; then
     emit_check "model_allocator_command" "fail" "true" "model-allocator not found on PATH"
+elif try_silent model-allocator --help; then
+    emit_check "model_allocator_command" "pass" "true" "model-allocator on PATH and runs"
+else
+    emit_check "model_allocator_command" "fail" "true" "model-allocator is on PATH but did not run"
 fi
 
 # 9. Allocator configuration loading
