@@ -172,3 +172,31 @@ class TestTheRoleIsToldWhereToWrite:
         loop, spies = loop_with(offered=envelope())
         loop.run_once()
         assert "compiled handoff body" in spies["tmux"].injected[-1]
+
+
+class TestTheClientIsReadyBeforeTheHandoffGoesIn:
+    """`launch` returns when tmux has typed the command, not when the TUI can
+    receive one. OpenCode takes seconds more to come up, and a handoff typed
+    into a terminal that is not listening is simply lost.
+
+    lightworker run 001 saw exactly that: the pane showed OpenCode at an empty
+    prompt while Father waited on an execution that would never report.
+    `wait_ready` had existed in the transport since it was built, and nothing
+    called it.
+    """
+
+    def test_it_waits_before_injecting(self):
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        calls = spies["tmux"].calls
+        assert "wait_ready" in calls, "the handoff went in without waiting"
+        assert calls.index("wait_ready") < calls.index("inject")
+
+    def test_a_client_that_never_shows_its_prompt_is_a_failure(self):
+        """Injecting anyway and hoping leaves Father waiting forever on an
+        execution whose role never read anything."""
+        loop, spies = loop_with(offered=envelope())
+        spies["tmux"].wait_ready = lambda *a, **k: False
+        loop.run_once()
+        assert spies["father"].failed == 1
+        assert "inject" not in spies["tmux"].calls

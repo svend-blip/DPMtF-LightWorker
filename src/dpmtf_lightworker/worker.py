@@ -155,6 +155,15 @@ CATEGORY_DELIVERABLE_MISSING: str = "DELIVERABLE_MISSING"
 DEFAULT_EXECUTION_TIMEOUT_SECONDS: float = 1800.0
 DELIVERABLE_POLL_SECONDS: float = 5.0
 
+# What OpenCode's idle prompt says when it is ready for a first message. The
+# worker waits for this before injecting, because `launch` returns when tmux
+# has typed the command, not when the TUI can receive one.
+#
+# Client-specific by nature, and §5 fixes the client at opencode for V1. A
+# second client means a marker per client, not a cleverer regex.
+CLIENT_READY_MARKER: str = "Ask anything"
+CLIENT_READY_TIMEOUT_SECONDS: float = 120.0
+
 
 # ---------------------------------------------------------------------------
 # Render-callable type — the Mission Contract injects
@@ -585,6 +594,39 @@ class WorkerLoop:
             model_alias=envelope.model_alias,
             client=envelope.client,
         )
+
+        # 11b. Wait for the client to be ready to receive a prompt.
+        #
+        # `launch` returns as soon as tmux has typed the command; the TUI
+        # takes seconds more to come up. The handoff used to go in
+        # immediately and land in a terminal that was not listening yet, so
+        # it was simply lost — the pane showed OpenCode at an empty prompt
+        # while Father waited on an execution that would never report.
+        #
+        # `wait_ready` has existed in the transport since it was built and
+        # nothing called it. It returns False rather than hanging, and a
+        # client that never shows its prompt is a real failure worth
+        # reporting rather than injecting into and hoping.
+        if not self._tmux.wait_ready(
+            session_name, CLIENT_READY_MARKER, CLIENT_READY_TIMEOUT_SECONDS
+        ):
+            self._report_failure(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                target_role=target_role,
+                model_alias=envelope.model_alias,
+                client=envelope.client,
+                category=CATEGORY_CLIENT_START_FAILED,
+                failure=(
+                    f"{envelope.client} never showed its prompt "
+                    f"({CLIENT_READY_MARKER!r}) within "
+                    f"{CLIENT_READY_TIMEOUT_SECONDS:.0f}s; pane:\n"
+                    + self._pane_tail(session_name)
+                ),
+                payload=payload,
+                last_state=self._state,
+            )
+            return
 
         # 12. Inject the handoff, and say where the deliverable goes.
         self._transition(WorkerState.INJECTING_HANDOFF)

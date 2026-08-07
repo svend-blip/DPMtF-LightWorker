@@ -136,8 +136,12 @@ def test_launch_sends_command_verbatim_with_one_enter() -> None:
     runner = FakeRunner()
     cmd = "opencode --model imple01-3060 --session exec-1"
     _session(runner).launch("dpmtf-imple01-1", cmd)
+    # Two calls. `send-keys -l` makes EVERY argument literal, so a trailing
+    # "Enter" alongside the text was typed as five characters rather than
+    # pressed -- measured on tmux 3.4 and 3.6. The key goes on its own.
     assert runner.calls == [
-        ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "-l", cmd, "Enter"]
+        ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "-l", cmd],
+        ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "Enter"],
     ]
 
 
@@ -210,25 +214,35 @@ def test_inject_submits_text_as_one_literal_payload_with_one_enter() -> None:
     runner = FakeRunner()
     long_text = "line one\nline two\nline three\n" * 50
     _session(runner).inject("dpmtf-imple01-1", long_text)
-    # Exactly one recorded call.
-    assert len(runner.calls) == 1
-    argv = runner.calls[0]
-    assert argv == ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "-l", long_text, "Enter"]
-    # The full payload is the literal text — no per-line splitting, no
-    # per-chunk submission.
-    assert long_text in argv
-    # The text was sent intact, not tokenised.
-    assert argv.count(long_text) == 1
-    # Exactly one trailing "Enter" across the entire submission.
-    enter_count = sum(1 for arg in argv if arg == "Enter")
-    assert enter_count == 1
+    # Two calls: the payload, then the key. No chunking, no per-line
+    # submission -- a 150-line handoff reaches the client as one prompt.
+    assert len(runner.calls) == 2
+    payload, key = runner.calls
+    assert payload[:5] == ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "-l"]
+    assert key == ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "Enter"]
+    # Sent intact, not tokenised, and exactly once.
+    assert payload.count(payload[5]) == 1
+    assert payload[5] == long_text.rstrip("\r\n")
+
+
+def test_inject_does_not_submit_twice_on_a_text_ending_in_a_newline() -> None:
+    """A literal newline submits on its own, so text ending in one plus a
+    pressed Enter is two submissions -- the second an empty prompt to the
+    role. Every compiled handoff ends in a newline, so this is the normal
+    case rather than an edge one."""
+    runner = FakeRunner()
+    _session(runner).inject("dpmtf-imple01-1", "the handoff\n")
+    assert runner.calls[0][5] == "the handoff"
+    assert sum(1 for c in runner.calls if c[-1] == "Enter") == 1
 
 
 def test_inject_submits_empty_text_with_just_enter() -> None:
     runner = FakeRunner()
     _session(runner).inject("dpmtf-imple01-1", "")
-    argv = runner.calls[0]
-    assert argv == ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "-l", "", "Enter"]
+    assert runner.calls == [
+        ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "-l", ""],
+        ["tmux", "send-keys", "-t", "dpmtf-imple01-1", "Enter"],
+    ]
 
 
 def test_inject_propagates_failure_as_handoff_injection_failed() -> None:

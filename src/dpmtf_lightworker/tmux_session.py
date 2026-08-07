@@ -87,10 +87,7 @@ class TmuxSession:
             raise ValueError("name must be a non-empty string")
         if not isinstance(command, str) or not command:
             raise ValueError("command must be a non-empty string")
-        self._call(
-            ["tmux", "send-keys", "-t", name, "-l", command, "Enter"],
-            failure_type=ClientStartFailed,
-        )
+        self._submit(name, command, failure_type=ClientStartFailed)
 
     def wait_ready(self, name: str, marker: str, timeout: float) -> bool:
         """Poll ``capture`` until ``marker`` is in the pane or ``timeout`` elapses.
@@ -124,10 +121,7 @@ class TmuxSession:
             raise ValueError("name must be a non-empty string")
         if not isinstance(text, str):
             raise ValueError("text must be a string")
-        self._call(
-            ["tmux", "send-keys", "-t", name, "-l", text, "Enter"],
-            failure_type=HandoffInjectionFailed,
-        )
+        self._submit(name, text, failure_type=HandoffInjectionFailed)
 
     def capture(self, name: str, lines: int) -> str:
         """Return the last ``lines`` of pane output for ``name``."""
@@ -158,6 +152,40 @@ class TmuxSession:
         self._call(
             ["tmux", "kill-session", "-t", name],
             failure_type=TmuxStartFailed,
+        )
+
+    def _submit(
+        self,
+        name: str,
+        text: str,
+        *,
+        failure_type: "type[EnvelopeError]",
+    ) -> None:
+        """Type ``text`` into ``name`` and press Enter. Two calls, not one.
+
+        `send-keys -l` makes EVERY argument literal, so the trailing
+        ``Enter`` this used to pass was typed as the five characters
+        "Enter" rather than pressed. Measured on tmux 3.4 and 3.6:
+
+            $ tmux send-keys -t s -l 'echo HI' Enter
+            $ tmux capture-pane -p -t s
+            bash-5.2$ echo HIEnter        <- typed, not run
+
+        It appeared to work only because the strings involved happened to
+        end in a newline, and a literal newline does submit. That made
+        submission depend on trailing whitespace nobody was maintaining,
+        and left the word "Enter" sitting in the next prompt.
+
+        The text is stripped of trailing newlines and the key is sent as a
+        key, so exactly one submission happens whatever the caller passes.
+        """
+        self._call(
+            ["tmux", "send-keys", "-t", name, "-l", text.rstrip("\r\n")],
+            failure_type=failure_type,
+        )
+        self._call(
+            ["tmux", "send-keys", "-t", name, "Enter"],
+            failure_type=failure_type,
         )
 
     def _call(
