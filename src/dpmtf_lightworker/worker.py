@@ -41,6 +41,7 @@ result; extending ``errors.py`` is a separate handoff.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Optional
@@ -227,11 +228,7 @@ class WorkerLoop:
 
         # 1. Poll Father for the next execution to claim.
         self._transition(WorkerState.RECEIVED)
-        offered = self._safe_call(
-            lambda: self._father.next_execution(),
-            category=CATEGORY_RESULT_REPORT_FAILED,
-            in_flight=False,
-        )
+        offered = self._poll_father()
         if offered is None or not offered:
             return False
         if not isinstance(offered, Mapping):
@@ -273,6 +270,12 @@ class WorkerLoop:
         claim_response = self._safe_call(
             lambda: self._father.claim(execution_id),
             category=CATEGORY_RESULT_REPORT_FAILED,
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            target_role=target_role,
+            model_alias=model_alias,
+            client=client,
+            payload=payload,
         )
         if claim_response is None:
             return
@@ -769,6 +772,42 @@ class WorkerLoop:
             model_source=SUPPORTED_MODEL_SOURCE,
         )
 
+    def _poll_father(self) -> Any:
+        """Ask Father for the next execution. Never raise, never report.
+
+        A poll failure has no execution to report a failure *about*. There
+        is no execution_id, no attempt_id, no role and no attempt — Father
+        has not handed us anything yet — so the §24 failure report has
+        nothing to address itself to, and the endpoint that would receive
+        it is the one that just proved unreachable.
+
+        The previous version routed this through ``_safe_call``, which
+        called ``_report_failure`` with keywords it does not accept. The
+        first time Father restarted, the poll raised ``Connection
+        refused``, the handler raised ``TypeError`` on top of it, and the
+        daemon died. A worker whose whole job is to poll a machine it does
+        not control cannot treat that machine being briefly absent as
+        fatal; Father restarting is ordinary.
+
+        Returns the offer, or ``None`` when there is nothing to do — which
+        is the same answer a poll against a Father with no work gives, and
+        the caller already handles it.
+        """
+        try:
+            return self._father.next_execution()
+        except FatherClientError as exc:
+            sys.stderr.write(
+                f"dpmtf-lightworker: Father unreachable, will retry: {exc}\n"
+            )
+            sys.stderr.flush()
+            return None
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(
+                f"dpmtf-lightworker: poll failed, will retry: {exc!r}\n"
+            )
+            sys.stderr.flush()
+            return None
+
     def _safe_call(
         self,
         call: Callable[[], Any],
@@ -968,7 +1007,6 @@ def _main() -> int:
     unit (when one ships) calls it.
     """
     import os
-    import sys
 
     from dpmtf_lightworker.allocator import AllocatorAdapter
     from dpmtf_lightworker.config import load_config
@@ -1001,7 +1039,26 @@ def _main() -> int:
     poll_seconds = max(1, int(config.worker.poll_interval_seconds))
     try:
         while True:
-            loop.run_once()
+            try:
+                loop.run_once()
+            except Exception as exc:  # noqa: BLE001
+                # The daemon is the worker's only presence on the network.
+                # An exception that escapes run_once used to end the
+                # process, which takes the machine out of the pool until
+                # somebody notices and restarts it by hand -- and the
+                # symptom, a worker that never claims anything, looks
+                # exactly like Father not offering anything.
+                #
+                # Every failure that belongs to an execution is already
+                # reported inside run_once. What reaches here is a defect
+                # in the loop itself, so it is printed and the next poll
+                # goes ahead: a worker degraded on one execution is worth
+                # more than one that is gone.
+                sys.stderr.write(
+                    f"dpmtf-lightworker: run_once raised, continuing: "
+                    f"{exc!r}\n"
+                )
+                sys.stderr.flush()
             time.sleep(float(poll_seconds))
     except KeyboardInterrupt:
         return 130
