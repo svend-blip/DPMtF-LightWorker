@@ -151,3 +151,24 @@ class TestARefusedResultIsNotAWorkerFailure:
         father.complete = gone
         loop.run_once()
         assert father.failed == 1
+
+
+class TestTheRoleIsToldWhereToWrite:
+    """The wait watches one exact path. A role that writes anywhere else has,
+    from this worker's side, written nothing.
+
+    Father compiles the handoff and knows the relative path; it does not know
+    the worktree, and the role sees neither unless the worker says so.
+    """
+
+    def test_the_injected_handoff_names_the_deliverable_path(self):
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        injected = spies["tmux"].injected[-1]
+        assert "docs/dpmtf/403_IMPLEMENTATION.md" in injected
+
+    def test_the_original_handoff_survives_intact(self):
+        """Appending must not cost the role its instructions."""
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        assert "compiled handoff body" in spies["tmux"].injected[-1]

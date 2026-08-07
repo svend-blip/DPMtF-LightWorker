@@ -586,10 +586,13 @@ class WorkerLoop:
             client=envelope.client,
         )
 
-        # 12. Inject the handoff.
+        # 12. Inject the handoff, and say where the deliverable goes.
         self._transition(WorkerState.INJECTING_HANDOFF)
         try:
-            self._tmux.inject(session_name, envelope.handoff.content)
+            self._tmux.inject(
+                session_name,
+                self._handoff_with_deliverable_path(envelope),
+            )
         except EnvelopeError as exc:
             self._report_failure(
                 execution_id=execution_id,
@@ -867,6 +870,33 @@ class WorkerLoop:
                 str(self._config.paths.repository_root)
             ).resolve(),
             model_source=SUPPORTED_MODEL_SOURCE,
+        )
+
+    def _handoff_with_deliverable_path(self, envelope: Any) -> str:
+        """The compiled handoff, plus the one thing only the worker knows.
+
+        The wait watches ``<worktree>/<expected_deliverable>``, so the role
+        has to write exactly there. Father compiles the handoff and knows the
+        relative path, but not the worktree, and the role sees neither unless
+        somebody says so — Father's handoffs describe the work, not the
+        machine it lands on.
+
+        Appended rather than prepended: the handoff ends with its
+        constraints, and the last thing a model reads before it starts is
+        worth spending on where the answer goes.
+        """
+        relative = envelope.handoff.expected_deliverable
+        return (
+            f"{envelope.handoff.content.rstrip()}\n\n"
+            "<deliverable>\n"
+            f"Write your deliverable to `{relative}`, relative to the root of\n"
+            "your worktree, which is the directory this session started in.\n"
+            "Create the directories if they are missing.\n\n"
+            "That exact path is what is watched. Nothing else is collected,\n"
+            "and a file written anywhere else is the same to this worker as\n"
+            "no file at all. Write it once and completely — it is read as\n"
+            "soon as it stops changing.\n"
+            "</deliverable>\n"
         )
 
     def _deliverable_timeout(self) -> float:

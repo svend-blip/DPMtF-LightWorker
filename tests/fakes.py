@@ -305,6 +305,7 @@ class FakeTmux(TmuxSession):
         super().__init__(runner=lambda argv: (0, "", ""))
         self.calls: List[str] = []
         self.killed: int = 0
+        self.injected: List[str] = []
         self._fail_set: FrozenSet[str] = _normalise_fail_at(fail_at)
 
     def session_name(self, role: str, execution_id: str) -> str:
@@ -328,6 +329,9 @@ class FakeTmux(TmuxSession):
 
     def inject(self, name: str, text: str) -> None:
         self.calls.append("inject")
+        # Kept, not just counted. What reaches the role is the only place the
+        # deliverable path is stated, and a counter cannot see a string.
+        self.injected.append(text)
         if "inject" in self._fail_set:
             from dpmtf_lightworker.errors import HandoffInjectionFailed
             raise HandoffInjectionFailed("fake: tmux inject failed")
