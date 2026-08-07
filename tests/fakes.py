@@ -173,6 +173,7 @@ class FakeFather:
         self.claims: int = 0
         self.completed: int = 0
         self.failed: int = 0
+        self.results: List[Any] = []
 
     def next_execution(self) -> Any:
         return self._offered
@@ -197,6 +198,9 @@ class FakeFather:
         self, execution_id: str, *, attempt_id: str, result: Any
     ) -> Any:
         self.completed += 1
+        # Kept, not just counted. The result's *shape* is what disagreed with
+        # Father's return path, and a counter cannot see a shape.
+        self.results.append(result)
         return {"status": "completed", "execution_id": execution_id}
 
     def fail(
@@ -226,6 +230,9 @@ class FakeGit(GitWorkspace):
         import tempfile
 
         tmp = tempfile.mkdtemp(prefix="dpmtf-fake-git-")
+        self.deliverable_relative = "docs/dpmtf/403_IMPLEMENTATION.md"
+        self.deliverable_content = "# Implementation\n\nWhat the role wrote.\n"
+        self.no_deliverable = False
         super().__init__(
             repository_root=tmp,
             worktree_root=tmp,
@@ -249,7 +256,19 @@ class FakeGit(GitWorkspace):
         if "create_worktree" in self._fail_set:
             from dpmtf_lightworker.errors import WorktreeCreationFailed
             raise WorktreeCreationFailed("fake: create_worktree failed")
-        return Path(self._worktree_root) / execution_id
+        worktree = Path(self._worktree_root) / execution_id
+        # A worktree with the role's deliverable already in it. The loop now
+        # waits for that file and reads it, so a fake worktree without one
+        # models a role that produced nothing -- which is a real case, but
+        # not the one the success criteria are about.
+        #
+        # `no_deliverable` leaves it out on purpose, for the criteria that
+        # measure the timeout.
+        if not self.no_deliverable:
+            target = worktree / self.deliverable_relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(self.deliverable_content, encoding="utf-8")
+        return worktree
 
     def commit_result(
         self, worktree: str, message: str
@@ -447,6 +466,7 @@ def loop_with(
     offered: Optional[Dict[str, Any]],
     fail_at: FailAtInput = None,
     clock: Optional[Callable[[], float]] = None,
+    no_deliverable: bool = False,
 ) -> tuple:
     """Build a ``WorkerLoop`` plus the spies the criteria read.
 
@@ -459,6 +479,8 @@ def loop_with(
     """
     father = FakeFather(offered)
     git = FakeGit(fail_at=fail_at)
+    if no_deliverable:
+        git.no_deliverable = True
     tmux = FakeTmux(fail_at=fail_at)
     allocator = FakeAllocator(fail_at=fail_at)
     config = _build_config()
@@ -470,6 +492,10 @@ def loop_with(
         git=git,
         tmux=tmux,
         clock=clock or (lambda: 0.0),
+        # No real waiting. The wait for a deliverable polls
+        # DELIVERABLE_POLL_SECONDS apart, which is right on a worker and
+        # thirty minutes in a test suite.
+        sleep=lambda _seconds: None,
     )
 
     spies = {

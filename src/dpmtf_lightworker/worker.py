@@ -41,6 +41,7 @@ result; extending ``errors.py`` is a separate handoff.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import time
 from pathlib import Path
@@ -139,6 +140,21 @@ CATEGORY_INTERNAL_WORKER_ERROR: str = "INTERNAL_WORKER_ERROR"
 CATEGORY_PATCH_GENERATION_FAILED: str = "PATCH_GENERATION_FAILED"
 # §24: a binary-safe patch could not be generated from the worktree.
 
+CATEGORY_ROLE_EXECUTION_TIMEOUT: str = "ROLE_EXECUTION_TIMEOUT"
+# §24: the role did not produce its deliverable before the deadline. Nothing
+# was ever written at the expected path.
+
+CATEGORY_DELIVERABLE_MISSING: str = "DELIVERABLE_MISSING"
+# §24: a file appeared at the expected path but never became a usable
+# deliverable -- empty, or still being written when the deadline passed.
+
+
+# How long a role may take before the worker gives up on it, and how often it
+# looks. The default suits a 14B model at 8k context writing a short document;
+# `worker.execution_timeout_seconds` overrides it per machine.
+DEFAULT_EXECUTION_TIMEOUT_SECONDS: float = 1800.0
+DELIVERABLE_POLL_SECONDS: float = 5.0
+
 
 # ---------------------------------------------------------------------------
 # Render-callable type — the Mission Contract injects
@@ -180,6 +196,7 @@ class WorkerLoop:
         tmux: TmuxSession,
         render_config: RenderConfigCallable = render_execution_config,
         clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._config = config
         self._father = father
@@ -188,6 +205,9 @@ class WorkerLoop:
         self._tmux = tmux
         self._render_config = render_config
         self._clock = clock
+        # Injected so the suite does not spend real seconds waiting for a
+        # deliverable that a fixture wrote before the call.
+        self._sleep = sleep
 
         self._state: WorkerState = WorkerState.RECEIVED
         self._events: List[Event] = []
@@ -593,16 +613,21 @@ class WorkerLoop:
             client=envelope.client,
         )
 
-        # 13-15. Run, collect, report. The "running" and "collecting"
-        # steps are observed by the events list — the loop does not
-        # own a real OpenCode session, so the completion signal is
-        # the event emission itself. A later run replaces this with
-        # a wait_ready loop and a real result collection; here we
-        # build a minimal patch and complete the execution.
+        # 13. Run the role, and wait for it.
+        #
+        # Until now the loop injected the handoff and reported straight
+        # away, because it had no real OpenCode session to wait on. The
+        # first live execution did exactly that: eleven seconds from claim
+        # to an empty result, with the model still starting.
+        #
+        # There is no completion signal from the client, so the deliverable
+        # itself is the signal. The role writes it inside its own worktree
+        # at the path the envelope named, and the worker waits for that file
+        # to appear and stop changing.
         self._transition(WorkerState.RUNNING_ROLE)
         self._record_event(
             EventType.ROLE_RUNNING,
-            payload={},
+            payload={"session": session_name},
             execution_id=execution_id,
             attempt_id=attempt_id,
             target_role=target_role,
@@ -610,10 +635,30 @@ class WorkerLoop:
             client=envelope.client,
         )
 
+        # 14. Collect the result.
         self._transition(WorkerState.COLLECTING_RESULT)
+        relative = envelope.handoff.expected_deliverable
+        content, why = self._await_deliverable(worktree_str, relative)
+        if content is None:
+            self._report_failure(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                target_role=target_role,
+                model_alias=envelope.model_alias,
+                client=envelope.client,
+                category=why,
+                failure=(
+                    f"no usable deliverable at {relative} after "
+                    f"{self._deliverable_timeout():.0f}s; last pane:\n"
+                    + self._pane_tail(session_name)
+                ),
+                payload=payload,
+                last_state=self._state,
+            )
+            return
         self._record_event(
             EventType.DELIVERABLE_DETECTED,
-            payload={"path": envelope.handoff.expected_deliverable},
+            payload={"path": relative, "bytes": len(content)},
             execution_id=execution_id,
             attempt_id=attempt_id,
             target_role=target_role,
@@ -649,10 +694,22 @@ class WorkerLoop:
             client=envelope.client,
         )
 
+        # The vocabulary is Father's return path's, because that is the side
+        # that has to produce a file. `mode` and a bare deliverable path were
+        # accepted by Father's endpoint and refused by the return path that
+        # publishes the deliverable -- one Father, two ideas of a result.
+        #
+        # The content travels inline: this version has no artifact transfer,
+        # so a result naming a path Father cannot reach is a result Father
+        # cannot use.
         result = {
-            "mode": envelope.result_contract.mode.value,
-            "deliverable": envelope.handoff.expected_deliverable,
-            "checksum": "",
+            "status": "role_execution_completed",
+            "result_mode": envelope.result_contract.mode.value,
+            "deliverable": {
+                "path": envelope.handoff.expected_deliverable,
+                "content": content,
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            },
             "patch": patch_text,
         }
 
@@ -665,6 +722,37 @@ class WorkerLoop:
                 result=result,
             )
         except FatherClientError as exc:
+            if exc.refused:
+                # Father answered and declined. Reporting a failure against
+                # that is arguing with a verdict: the execution is already
+                # terminal on Father's side, so the fail cannot land -- it
+                # came back 500 -- and the worker did not fail, it reported
+                # something Father would not take.
+                #
+                # Record it locally, clean up, and stop. The 422's own detail
+                # says what was wrong with the result, and Father has it.
+                self._record_event(
+                    EventType.ROLE_EXECUTION_FAILED,
+                    payload={
+                        "category": CATEGORY_RESULT_REPORT_FAILED,
+                        "failure": str(exc),
+                        "refused_by_father": True,
+                        "last_state": self._state.value,
+                    },
+                    execution_id=execution_id,
+                    attempt_id=attempt_id,
+                    target_role=target_role,
+                    model_alias=envelope.model_alias,
+                    client=envelope.client,
+                )
+                sys.stderr.write(
+                    f"dpmtf-lightworker: Father refused the result for "
+                    f"{execution_id}: {exc}\n"
+                )
+                sys.stderr.flush()
+                self._transition(WorkerState.ROLE_EXECUTION_FAILED)
+                self._cleanup(execution_id, session_name)
+                return
             self._report_failure(
                 execution_id=execution_id,
                 attempt_id=attempt_id,
@@ -780,6 +868,77 @@ class WorkerLoop:
             ).resolve(),
             model_source=SUPPORTED_MODEL_SOURCE,
         )
+
+    def _deliverable_timeout(self) -> float:
+        """How long a role may take. Config, with a default that fits a 14B."""
+        return float(
+            getattr(self._config.worker, "execution_timeout_seconds", 0)
+            or DEFAULT_EXECUTION_TIMEOUT_SECONDS
+        )
+
+    def _await_deliverable(
+        self, worktree: str, relative: str
+    ) -> "tuple[Optional[str], str]":
+        """Wait for the role to write its deliverable. Returns (content, why).
+
+        There is no completion signal from OpenCode, so the file is the
+        signal. Two conditions, not one: the file must exist **and** stop
+        changing. A file caught mid-write is a truncated document that
+        Father would checksum, publish and hand to a reviewer, who would
+        review half a deliverable without knowing.
+
+        The path is the envelope's `expected_deliverable`, resolved inside
+        the worktree. Father writes the same relative path under its bridge
+        directory, so one string names both ends and neither has to know the
+        other's root.
+
+        ``why`` is a §24 category when the wait fails, and ``""`` when it
+        does not. The two cases are genuinely different and a reviewer needs
+        to tell them apart: nothing was ever written (the role never got
+        there) against something was written and is empty (the role got
+        there and produced nothing).
+        """
+        target = Path(worktree) / relative
+        previous: "Optional[tuple[int, float]]" = None
+        seen = False
+
+        # Bounded by iterations rather than by a clock reading. The clock is
+        # injected -- the suite freezes it at 0.0 so timestamps are stable --
+        # and a deadline compared against a frozen clock never arrives. The
+        # first version of this loop hung the whole suite.
+        #
+        # Counting polls also makes the wait honest about what it does: it
+        # looks a fixed number of times, `DELIVERABLE_POLL_SECONDS` apart.
+        attempts = max(1, int(self._deliverable_timeout() / DELIVERABLE_POLL_SECONDS))
+        for _ in range(attempts):
+            try:
+                stat = target.stat()
+                seen = True
+                signature = (stat.st_size, stat.st_mtime)
+                if stat.st_size and signature == previous:
+                    text = target.read_text(encoding="utf-8", errors="replace")
+                    if text.strip():
+                        return text, ""
+                previous = signature
+            except OSError:
+                previous = None
+            self._sleep(DELIVERABLE_POLL_SECONDS)
+
+        if not seen:
+            return None, CATEGORY_ROLE_EXECUTION_TIMEOUT
+        return None, CATEGORY_DELIVERABLE_MISSING
+
+    def _pane_tail(self, session_name: str, lines: int = 40) -> str:
+        """The role's last output, for the failure report.
+
+        A timeout with no pane is unreadable: a role that stalled on a
+        permission prompt and one that never started look identical from the
+        outside, and the pane is the only place the difference shows.
+        """
+        try:
+            return self._tmux.capture(session_name, lines)
+        except Exception as exc:  # noqa: BLE001 - diagnostics, never fatal
+            return f"(pane unavailable: {exc!r})"
 
     def _poll_father(self) -> Any:
         """Ask Father for the next execution. Never raise, never report.

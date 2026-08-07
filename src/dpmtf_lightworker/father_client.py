@@ -54,7 +54,31 @@ class FatherClientError(Exception):
 
     The default transport raises this; tests with a fake transport
     can return whatever they want.
+
+    ``status`` carries the HTTP status when Father answered, and is ``None``
+    when it did not answer at all. `urllib`'s HTTPError is a subclass of
+    URLError, so without this a 422 refusal and an unreachable host arrived
+    as the same exception with the same shape.
+
+    The worker needs the difference. A refused result is Father working
+    correctly and saying no; an unreachable Father is Father being absent.
+    Treating the first as the second made the worker report a failure on an
+    execution Father had already closed, which came back 500.
     """
+
+    def __init__(self, message: str, status: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def refused(self) -> bool:
+        """True when Father answered and declined. 4xx, not 5xx.
+
+        A 5xx is Father broken, which is worth reporting as a failure. A 4xx
+        is Father's considered answer, and reporting a failure against it is
+        arguing with a verdict.
+        """
+        return self.status is not None and 400 <= self.status < 500
 
 
 class FatherClient:
@@ -315,6 +339,19 @@ def _make_default_transport(
             response = urllib_request.urlopen(
                 request, timeout=timeout_seconds
             )
+        except urllib_error.HTTPError as exc:
+            # Checked before URLError: HTTPError is a subclass of it, so the
+            # broad clause below would otherwise swallow every status code.
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:500]
+            except Exception:  # noqa: BLE001 - best effort, never fatal
+                pass
+            raise FatherClientError(
+                f"Father request {method} {url} refused with "
+                f"{exc.code}: {detail or exc}",
+                status=exc.code,
+            ) from exc
         except urllib_error.URLError as exc:
             raise FatherClientError(
                 f"Father request {method} {url} failed: {exc}"
