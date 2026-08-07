@@ -77,7 +77,9 @@ def test_preflight_builds_role_form() -> None:
     assert adapter.preflight("imple01", "opencode") == "READY"
     argv, timeout = runner.calls[0]
     assert argv == ["model-allocator", "preflight", "--role", "imple01", "--client", "opencode"]
-    assert timeout == 12.5
+    # 600, not the adapter's configured timeout: preflight may cold-start a
+    # model server, and EXEC-016 died at the tight timeout doing exactly that.
+    assert timeout == 600.0
 
 
 def test_validate_builds_alias_form() -> None:
