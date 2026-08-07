@@ -118,6 +118,22 @@ servers* resolves the role's alias ON this machine (its `roles.yaml`, not
 Father's stored value) and stops that runtime. Restart is the tmux
 command above.
 
+**Patch mode:** a role whose `primary_output_type` is `patch` returns its
+code changes as a git patch (§17.1): the worker commits the worktree
+first — so files the role CREATED are captured — then diffs
+`base..HEAD`. Father applies the verified patch to the review branch
+`lightworker/<flow>-<handoff>` in the target project; nothing on this
+machine pushes anything (§16.6).
+
+**Artifacts:** deliverables or patches above 256 KiB upload
+content-addressed to Father first and travel as an `artifact_sha256`
+reference.
+
+**Credentials:** the token in `~/.lightworker-auth` is per-worker (minted
+on Father, shown once). It both authenticates and identifies — asserting
+another worker's id is 403 — and Father expires this worker's stale
+claims whenever it polls, so a crashed execution cannot jam the queue.
+
 **Watchdog:** Father's `chain-watchdog.service` watches every flow
 permanently — remote roles prove life through execution heartbeats, and
 are never auto-nudged (a re-sent signal would mint a second execution
