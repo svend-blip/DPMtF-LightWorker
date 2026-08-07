@@ -508,7 +508,14 @@ class WorkerLoop:
         # 9. Acquire runtime — the allocator returns the client command.
         self._transition(WorkerState.ACQUIRING_RUNTIME)
         try:
-            client_command = self._allocator.run(target_role, envelope.client)
+            # The config published one step ago is named here, so the command
+            # points OpenCode at it. Without this the allocator names its own
+            # shared role config -- and the permission block confining the
+            # role to its worktree (§19), and this machine's provider
+            # endpoint, are in a file nobody opens.
+            client_command = self._allocator.run(
+                target_role, envelope.client, config_path=published_path
+            )
         except EnvelopeError as exc:
             self._report_failure(
                 execution_id=execution_id,

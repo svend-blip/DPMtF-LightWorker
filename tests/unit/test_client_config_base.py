@@ -168,3 +168,46 @@ class TestTheMergeIsDeep:
         than one that is simply stated."""
         from dpmtf_lightworker.client_config import _deep_merge
         assert _deep_merge({"k": [1, 2]}, {"k": [3]})["k"] == [3]
+
+
+class TestTheRenderedConfigIsTheOneOpenCodeReads:
+    """A config nobody opens is not a config.
+
+    The worker rendered a per-execution config, merged in the permission
+    block confining the role to its worktree (§19) and this machine's
+    provider endpoint, validated it and published it -- and then asked the
+    allocator for a launch command that named the allocator's own shared role
+    file. Three executions ran that way. The role had no confinement at all,
+    and OpenCode failed on an endpoint it did not have.
+
+    The command still comes back verbatim (§34). The worker asks for a
+    different command; it does not edit the one it gets.
+    """
+
+    def test_the_launch_command_is_asked_for_the_published_config(self):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from tests.fakes import envelope, loop_with
+
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        paths = spies["allocator"].run_config_paths
+        assert paths and paths[-1], "run was asked for no config at all"
+        assert paths[-1].endswith(".json")
+
+    def test_it_is_the_same_file_that_was_published(self):
+        """Naming a different path would be the same defect wearing the
+        opposite disguise."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from tests.fakes import envelope, loop_with
+
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        rendered = [e for e in loop._events
+                    if e.event_type.value == "CLIENT_CONFIG_RENDERED"]
+        assert rendered, "nothing was published"
+        assert spies["allocator"].run_config_paths[-1] == \
+            rendered[-1].payload["path"]

@@ -52,9 +52,24 @@ class AllocatorAdapter:
         )
         return self._call(argv, ClientConfigRenderFailed)
 
-    def run(self, role: str, client: str) -> str:
-        """Return the allocator-produced client command without modification."""
-        argv = self._build_command("run", role=role, client=client)
+    def run(self, role: str, client: str, config_path: str = "") -> str:
+        """Return the allocator-produced client command without modification.
+
+        ``config_path`` names the config THIS worker rendered, so the command
+        points OpenCode at it. Without it the allocator names its own shared
+        role config and refreshes it, and the execution-specific config the
+        worker built -- with the permission block confining the role to its
+        worktree, and this machine's provider endpoint -- is never read.
+
+        lightworker run 001 found that: three executions rendered a config
+        nobody opened. The role had no §19 confinement at all, and OpenCode
+        failed on a provider endpoint it did not have.
+
+        The command still comes back verbatim (§34). The worker asks for a
+        different command; it does not edit the one it gets.
+        """
+        argv = self._build_command(
+            "run", role=role, client=client, config_path=config_path)
         output = self._call(argv, AllocatorNotAvailable)
         if not output:
             raise AllocatorNotAvailable(
@@ -96,6 +111,8 @@ class AllocatorAdapter:
                 "--client",
                 values["client"],
                 *(["--output", values["output"]] if operation == "render-config" else []),
+                *(["--config", values["config_path"]]
+                  if operation == "run" and values.get("config_path") else []),
             ]
         if operation == "validate":
             return [

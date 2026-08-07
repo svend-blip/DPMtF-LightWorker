@@ -366,6 +366,7 @@ class FakeAllocator(AllocatorAdapter):
             timeout=30.0,
         )
         self.calls: List[str] = []
+        self.run_config_paths: List[str] = []
         self._fail_set: FrozenSet[str] = _normalise_fail_at(fail_at)
 
     def preflight(self, role: str, client: str) -> str:
@@ -403,8 +404,12 @@ class FakeAllocator(AllocatorAdapter):
         )
         return output
 
-    def run(self, role: str, client: str) -> str:
+    def run(self, role: str, client: str, config_path: str = "") -> str:
         self.calls.append("run")
+        # Kept: whether the command names the worker's own config is the
+        # difference between a rendered config that is read and one that is
+        # decorative, and a counter cannot see an argument.
+        self.run_config_paths.append(config_path)
         if "run" in self._fail_set:
             from dpmtf_lightworker.errors import AllocatorNotAvailable
             raise AllocatorNotAvailable("fake: run failed")
