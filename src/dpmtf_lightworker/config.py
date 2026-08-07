@@ -51,6 +51,13 @@ class WorkerSection:
     max_parallel_executions: int
     poll_interval_seconds: int
     heartbeat_interval_seconds: int
+    # How long a role may take before the worker gives up on its
+    # deliverable. 0 means "use the loop's built-in default". Optional,
+    # because every worker.yaml written before 2026-08-07 lacks it -- and
+    # until then the knob was documented in worker.py's comments while this
+    # dataclass had no such field, so setting it in YAML silently did
+    # nothing. A knob that is documented must exist.
+    execution_timeout_seconds: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +259,32 @@ def _parse_worker(section: Mapping[str, Any], source: str) -> WorkerSection:
         heartbeat_interval_seconds=_required_int(
             section, "heartbeat_interval_seconds", "worker", source
         ),
+        execution_timeout_seconds=_optional_int(
+            section, "execution_timeout_seconds", "worker", source
+        ),
     )
+
+
+def _optional_int(
+    section: Mapping[str, Any], key: str, section_name: str, source: str
+) -> int:
+    """An int that may be absent. Absent is 0; present-but-wrong raises.
+
+    An absent key is a configuration that predates the setting. A key
+    present with the wrong type is a typo, and returning 0 for it would
+    silently drop what the operator meant to say. `bool` is rejected
+    explicitly because it is an `int` subclass and YAML's `yes` would
+    otherwise arrive as 1.
+    """
+    if key not in section or section[key] is None:
+        return 0
+    value = section[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WorkerConfigError(
+            f"worker configuration file {source}: {section_name}.{key} must "
+            f"be an integer, got {type(value).__name__}"
+        )
+    return value
 
 
 def _parse_father(section: Mapping[str, Any], source: str) -> FatherSection:

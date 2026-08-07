@@ -279,7 +279,36 @@ class WorkerLoop:
     # ------------------------------------------------------------------
 
     def _execute(self, payload: Mapping[str, Any]) -> None:
-        """Run the §14 sequence. Always cleans up; always reports."""
+        """Run the §14 sequence, and report whatever escapes it.
+
+        Every step inside catches `EnvelopeError` -- the failures the
+        sequence *expects*. Anything else used to propagate out, get logged
+        by `_main`'s catch-all, and leave the execution `claimed` forever on
+        Father's side -- and a claimed execution blocks every future offer
+        to this worker. One malformed JSON file from a collaborator would
+        have jammed the queue permanently, exactly the way EXEC-013 did.
+
+        This is what INTERNAL_WORKER_ERROR is for: §24's name for a bug in
+        the loop itself. `_report_failure` also runs cleanup, so the
+        worktree and the tmux session do not outlive the failure.
+        """
+        try:
+            self._run_sequence(payload)
+        except Exception as exc:  # noqa: BLE001 - the queue must not jam
+            self._report_failure(
+                execution_id=str(payload.get("execution_id", "")),
+                attempt_id=str(payload.get("attempt_id", "")),
+                target_role=str(payload.get("target_role", "")),
+                model_alias=str(payload.get("model_alias", "")),
+                client=str(payload.get("client", "")),
+                category=CATEGORY_INTERNAL_WORKER_ERROR,
+                failure=f"unexpected error in the execution sequence: {exc!r}",
+                payload=payload,
+                last_state=self._state,
+            )
+
+    def _run_sequence(self, payload: Mapping[str, Any]) -> None:
+        """The §14 sequence proper. Expected failures are reported inline."""
         execution_id = str(payload["execution_id"])
         attempt_id = str(payload.get("attempt_id", ""))
         target_role = str(payload.get("target_role", ""))
@@ -1001,8 +1030,11 @@ class WorkerLoop:
 
     def _deliverable_timeout(self) -> float:
         """How long a role may take. Config, with a default that fits a 14B."""
+        # Direct attribute access, not getattr-with-default: the field
+        # exists on WorkerSection now. The getattr fallback was hiding that
+        # it did not -- the documented override silently read 0 forever.
         return float(
-            getattr(self._config.worker, "execution_timeout_seconds", 0)
+            self._config.worker.execution_timeout_seconds
             or DEFAULT_EXECUTION_TIMEOUT_SECONDS
         )
 

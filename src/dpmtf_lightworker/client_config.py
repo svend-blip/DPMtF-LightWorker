@@ -153,7 +153,14 @@ def render_execution_config(
             raise ClientConfigRenderFailed(
                 f"allocator did not write a config to {tmp_path}"
             )
-        rendered = json.loads(tmp_path.read_text(encoding="utf-8"))
+        try:
+            rendered = json.loads(tmp_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            # Without this, a truncated or malformed allocator output raised
+            # a bare JSONDecodeError that nothing upstream categorised.
+            raise ClientConfigRenderFailed(
+                f"allocator wrote invalid JSON to {tmp_path}: {exc}"
+            ) from exc
 
         # The base config goes UNDERNEATH what the allocator produced.
         #

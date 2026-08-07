@@ -280,3 +280,35 @@ def test_boolean_not_accepted_as_integer(
     with pytest.raises(WorkerConfigError) as excinfo:
         load_config(config_path)
     assert "max_parallel_executions" in str(excinfo.value)
+
+
+
+def test_execution_timeout_is_read_when_set(tmp_path, example_env):
+    """Until 2026-08-07 this knob was documented in worker.py's comments and
+    did not exist on WorkerSection, so setting it in worker.yaml silently did
+    nothing. A knob that is documented must exist."""
+    body = _EXAMPLE_YAML.replace(
+        "poll_interval_seconds: 10",
+        "poll_interval_seconds: 10\n  execution_timeout_seconds: 300",
+    )
+    cfg = load_config(_write_config(tmp_path, body))
+    assert cfg.worker.execution_timeout_seconds == 300
+
+
+def test_execution_timeout_defaults_to_zero_meaning_builtin(tmp_path, example_env):
+    """0 is 'use the loop's built-in default' -- every worker.yaml written
+    before the knob existed must keep loading."""
+    cfg = load_config(_write_config(tmp_path, _EXAMPLE_YAML))
+    assert cfg.worker.execution_timeout_seconds == 0
+
+
+def test_execution_timeout_with_the_wrong_type_raises(tmp_path, example_env):
+    """Absent is 0; present-but-wrong must not be. YAML's `yes` arrives as a
+    bool, which is an int subclass, and silently becoming 1 second would be
+    worse than an error."""
+    body = _EXAMPLE_YAML.replace(
+        "poll_interval_seconds: 10",
+        "poll_interval_seconds: 10\n  execution_timeout_seconds: yes",
+    )
+    with pytest.raises(WorkerConfigError):
+        load_config(_write_config(tmp_path, body))
