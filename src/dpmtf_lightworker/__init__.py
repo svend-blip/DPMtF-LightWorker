@@ -66,6 +66,7 @@ from dpmtf_lightworker.models import (
 from dpmtf_lightworker.safe_paths import redact, resolve_within
 from dpmtf_lightworker.states import WorkerState
 from dpmtf_lightworker.tmux_session import TmuxSession
+from dpmtf_lightworker.worker import WorkerLoop
 
 __all__ = [
     "AliasValidationFailed",
@@ -113,6 +114,7 @@ __all__ = [
     "ValidatorConfig",
     "WorkerConfig",
     "WorkerConfigError",
+    "WorkerLoop",
     "WorkerMismatch",
     "WorkerSection",
     "WorkerState",
