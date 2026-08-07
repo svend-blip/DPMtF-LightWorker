@@ -101,7 +101,10 @@ fi
 # into a confident false report about a live service.
 FATHER_URL=""
 if [ -f "$REPO_ROOT/config/worker.yaml" ]; then
-    FATHER_URL=$(grep -E '^[[:space:]]*base_url' "$REPO_ROOT/config/worker.yaml" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*([^"#[:space:]]+).*/\1/' || true)
+    # Strip only the FIRST `key:` — a base_url contains colons of its own,
+    # and the greedy `.*:` this file uses elsewhere reduced
+    # http://host:9130 to just `9130`.
+    FATHER_URL=$(grep -E '^[[:space:]]*base_url' "$REPO_ROOT/config/worker.yaml" 2>/dev/null | head -n1 | sed -E 's/^[[:space:]]*[A-Za-z_]+:[[:space:]]*//; s/[[:space:]]*(#.*)?$//' || true)
 fi
 if [ -z "$FATHER_URL" ]; then
     emit_check "father_reachability" "fail" "true" "no base_url in config/worker.yaml"

@@ -172,6 +172,21 @@ def test_father_check_reports_no_answer_rather_than_no_resolution(tmp_path: Path
     assert "answer" in checks["father_reachability"]["reason"]
 
 
+def test_a_base_url_with_a_port_survives_extraction(tmp_path: Path) -> None:
+    """The whole URL must reach the reason, not the tail after the last colon.
+
+    The greedy `.*:` used elsewhere in the script reduced
+    `http://100.82.231.128:9130` to `9130`, and the check then reported a live
+    Father as unreachable. The earlier test missed it because it asserted the
+    SHAPE of the outcome — a failure whose reason mentions "answer" — and both
+    held with a mangled URL. Assert the value.
+    """
+    repo = _fixture_repo(
+        tmp_path, worker_yaml="father:\n  base_url: http://127.0.0.1:1\n")
+    reason = _run_in(repo)["father_reachability"]["reason"]
+    assert "http://127.0.0.1:1" in reason, f"URL was mangled: {reason}"
+
+
 def test_absent_and_broken_allocator_give_different_reasons(tmp_path: Path) -> None:
     """`--version` is not a flag that CLI has; it exits 2. Reporting that as
     'not found on PATH' sent a reader to reinstall a working binary."""
