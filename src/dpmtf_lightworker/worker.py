@@ -768,6 +768,32 @@ class WorkerLoop:
             client=envelope.client,
         )
 
+        # Patch modes: commit the worktree FIRST, so untracked files the
+        # role created are captured -- generate_patch diffs base..HEAD and
+        # sees only committed work. The deliverable and .lightworker/ are
+        # excluded from status, so they stay out of the patch. §17.1's
+        # "local result commit" is this commit's sha.
+        result_commit = None
+        if envelope.result_contract.mode.value != "deliverable_only":
+            try:
+                result_commit = self._git.commit_result(
+                    worktree_str,
+                    f"lightworker {execution_id}: role result",
+                )
+            except EnvelopeError as exc:
+                self._report_failure(
+                    execution_id=execution_id,
+                    attempt_id=attempt_id,
+                    target_role=target_role,
+                    model_alias=envelope.model_alias,
+                    client=envelope.client,
+                    category=exc.category,
+                    failure=str(exc),
+                    payload=payload,
+                    last_state=self._state,
+                )
+                return
+
         patch_text = ""
         try:
             patch_text = self._git.generate_patch(
@@ -826,8 +852,26 @@ class WorkerLoop:
             "status": "role_execution_completed",
             "result_mode": envelope.result_contract.mode.value,
             "deliverable": deliverable_block,
-            "patch": patch_text,
         }
+        if envelope.result_contract.mode.value == "deliverable_only":
+            result["patch"] = patch_text
+        else:
+            # §17.1: base commit, result commit, patch checksum. The base is
+            # the envelope's -- Father cross-checks it against what it
+            # dispatched, so echoing anything else is discovered.
+            result["base_commit"] = envelope.repository.base_commit
+            result["result_commit"] = result_commit or ""
+            result["checksum"] = hashlib.sha256(
+                patch_text.encode("utf-8")).hexdigest()
+            raw_patch = patch_text.encode("utf-8")
+            if len(raw_patch) <= INLINE_CONTENT_MAX_BYTES:
+                result["patch"] = patch_text
+            else:
+                try:
+                    result["patch_artifact_sha256"] = \
+                        self._father.upload_artifact(raw_patch)
+                except Exception:  # noqa: BLE001
+                    result["patch"] = patch_text
 
         # 16. Report result.
         self._transition(WorkerState.REPORTING_RESULT)
