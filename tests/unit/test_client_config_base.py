@@ -1,0 +1,128 @@
+"""The permission block comes from a base config the worker's steward owns.
+
+`model-allocator render-config` emits only `model` and `provider`. It never
+produces `permission` or `mcp` -- it *merges into* a config that already
+exists, which is what §9 means by preserving existing keys. So something has
+to write that config first.
+
+Not Father: §19 is explicit that the worker must not depend on Father knowing
+its filesystem. The file belongs to the machine's steward and is named in
+config/worker.yaml.
+
+lightworker run 001 found this the hard way. Rendering into an empty directory
+succeeded and produced a config with no permission block at all -- not a
+weaker confinement but none.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
+
+from dpmtf_lightworker.client_config import (  # noqa: E402
+    WORKTREE_PLACEHOLDER,
+    render_execution_config,
+    validate_rendered_config,
+)
+from dpmtf_lightworker.errors import ClientConfigRenderFailed  # noqa: E402
+
+
+class MergingAllocator:
+    """Stands in for `render-config`: merges model+provider into what it finds.
+
+    That is the real behaviour, and it is the whole reason a base config is
+    needed. An allocator fake that ignored the existing file would let a
+    broken implementation pass.
+    """
+
+    def render_config(self, *, role: str, client: str, output: str) -> None:
+        path = Path(output)
+        existing = {}
+        if path.exists() and path.stat().st_size:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        existing.update({"model": "m", "provider": {"ollama": {}}})
+        path.write_text(json.dumps(existing), encoding="utf-8")
+
+
+def _base(tmp_path, body):
+    p = tmp_path / "base.json"
+    p.write_text(json.dumps(body), encoding="utf-8")
+    return str(p)
+
+
+def test_the_permission_block_survives_the_merge(tmp_path):
+    base = _base(tmp_path, {"permission": {"external_directory": {"/w": "allow"}}})
+    target = tmp_path / "out" / "opencode.json"
+    render_execution_config(
+        MergingAllocator(), "imple01LW", str(target), base, "/w")
+    published = json.loads(target.read_text(encoding="utf-8"))
+    assert published["permission"] == {"external_directory": {"/w": "allow"}}
+    assert published["model"] == "m"
+
+
+def test_the_worktree_is_bound_into_the_base_config(tmp_path):
+    """The worktree differs on every execution, so no operator can write it
+    down in advance."""
+    base = _base(tmp_path, {
+        "permission": {"external_directory": {
+            WORKTREE_PLACEHOLDER: "allow",
+            WORKTREE_PLACEHOLDER + "/**": "allow",
+        }}})
+    target = tmp_path / "opencode.json"
+    render_execution_config(
+        MergingAllocator(), "imple01LW", str(target), base,
+        "/home/svend/lightworker/worktrees/EXEC-004")
+    allowed = json.loads(target.read_text(encoding="utf-8"))["permission"][
+        "external_directory"]
+    assert "/home/svend/lightworker/worktrees/EXEC-004" in allowed
+    assert WORKTREE_PLACEHOLDER not in json.dumps(allowed)
+
+
+def test_no_base_config_means_no_permission_block_and_a_refusal(tmp_path):
+    """The state every worker.yaml written before 2026-08-07 produces. It must
+    fail loudly: an unconfined role is worse than a stopped one."""
+    target = tmp_path / "opencode.json"
+    with pytest.raises(ClientConfigRenderFailed) as exc:
+        render_execution_config(MergingAllocator(), "imple01LW", str(target))
+    assert "permission" in str(exc.value)
+    assert not target.exists()
+
+
+def test_an_unreadable_base_config_names_the_path(tmp_path):
+    target = tmp_path / "opencode.json"
+    missing = str(tmp_path / "nope.json")
+    with pytest.raises(ClientConfigRenderFailed) as exc:
+        render_execution_config(
+            MergingAllocator(), "imple01LW", str(target), missing, "/w")
+    assert missing in str(exc.value)
+
+
+def test_a_malformed_base_config_is_not_silently_skipped(tmp_path):
+    """Skipping it would produce an unconfined config from a typo."""
+    bad = tmp_path / "base.json"
+    bad.write_text("{ not json", encoding="utf-8")
+    target = tmp_path / "opencode.json"
+    with pytest.raises(ClientConfigRenderFailed) as exc:
+        render_execution_config(
+            MergingAllocator(), "imple01LW", str(target), str(bad), "/w")
+    assert "not valid JSON" in str(exc.value)
+    assert not target.exists()
+
+
+def test_mcp_is_not_required():
+    """§9 lists it among keys to preserve if present, not keys to require.
+    Father's own OpenCode config has none."""
+    validate_rendered_config(json.dumps({
+        "permission": {}, "model": "m", "provider": {}}))
+
+
+def test_a_config_without_permission_is_still_refused():
+    with pytest.raises(ClientConfigRenderFailed):
+        validate_rendered_config(json.dumps({"model": "m", "provider": {}}))

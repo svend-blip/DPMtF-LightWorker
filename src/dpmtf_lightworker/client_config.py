@@ -17,16 +17,66 @@ if TYPE_CHECKING:
 
 _REQUIRED_BLOCKS = (
     "permission",
-    "mcp",
     "model",
     "provider",
 )
+
+# `mcp` is deliberately not required. §9 says the merge must preserve
+# existing keys "such as $schema, permission, mcp, other providers" — a
+# conditional list of what must survive, not a list of what must be
+# present. Father's own OpenCode config on this network has no mcp block
+# at all, so requiring one made a correct config unusable.
+#
+# `permission` is required, because §19 makes it load-bearing: it is what
+# confines the role to its worktree, and a config without it is not a
+# weaker config but an unconfined one.
+
+# The placeholder a base config uses for the execution's worktree. The
+# worktree path is different on every execution and is not known when the
+# operator writes the file.
+WORKTREE_PLACEHOLDER = "{worktree}"
+
+
+def _load_base_config(base_config_path: str, worktree: str) -> dict:
+    """Read the operator's base OpenCode config and bind it to this worktree.
+
+    The allocator renders only `model` and `provider`; it never produces
+    `permission` or `mcp`. It *merges into* an existing config, which is
+    what §9 means by preserving existing keys. So something has to write
+    that existing config first, and it is not Father: §19 is explicit that
+    the worker must not depend on Father knowing its filesystem.
+
+    The file belongs to the machine's steward and is named in
+    `config/worker.yaml`. Occurrences of ``{worktree}`` are replaced with
+    this execution's worktree, which no operator can write down in advance.
+    """
+    path = Path(base_config_path).expanduser()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ClientConfigRenderFailed(
+            f"base client config could not be read at {path}: {exc}"
+        ) from exc
+    text = text.replace(WORKTREE_PLACEHOLDER, worktree)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ClientConfigRenderFailed(
+            f"base client config at {path} is not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(data, Mapping):
+        raise ClientConfigRenderFailed(
+            f"base client config at {path} is not a JSON object"
+        )
+    return dict(data)
 
 
 def render_execution_config(
     allocator: "AllocatorAdapter",
     role: str,
     output_path: str,
+    base_config_path: str = "",
+    worktree: str = "",
 ) -> str:
     """Render an execution-specific OpenCode config, validate, and publish.
 
@@ -68,6 +118,15 @@ def render_execution_config(
     tmp_path = tmp_dir / target.name
     tmp_name = str(tmp_path)
     try:
+        # Seed the temp path with the operator's base config so the allocator
+        # has something to merge into. An empty directory made `render-config`
+        # succeed and produce only `model` and `provider` — a config with no
+        # permission block, which §19 makes load-bearing.
+        if base_config_path:
+            base = _load_base_config(base_config_path, worktree)
+            tmp_path.write_text(
+                json.dumps(base, indent=2) + "\n", encoding="utf-8"
+            )
         try:
             allocator.render_config(
                 role=role, client="opencode", output=tmp_name
@@ -101,10 +160,13 @@ def render_execution_config(
 def validate_rendered_config(text: str) -> None:
     """Raise :class:`ClientConfigRenderFailed` if the rendered config is unusable.
 
-    §33 names the four required blocks: ``permission``, ``mcp``, the
-    top-level ``model`` field, and a ``provider`` block. JSON that is
-    missing, unparseable, or not a top-level object is equally
-    unusable.
+    A usable config carries ``permission`` — §19's confinement — plus the
+    ``model`` and ``provider`` the allocator renders. JSON that is missing,
+    unparseable, or not a top-level object is equally unusable.
+
+    ``mcp`` is not required. §9 lists it among keys the merge must preserve
+    *if present*, which is not the same as requiring one; Father's own
+    OpenCode config has none.
     """
     if not isinstance(text, str):
         raise ClientConfigRenderFailed(

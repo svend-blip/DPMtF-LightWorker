@@ -74,7 +74,11 @@ def test_validate_rendered_config_raises_for_non_string_input() -> None:
 
 @pytest.mark.parametrize(
     "missing",
-    ["permission", "mcp", "model", "provider"],
+    # `mcp` is absent from this list on purpose. §9 lists it among keys the
+    # merge must preserve *if present*, which is not the same as requiring
+    # one; Father's own OpenCode config has none, and requiring it made a
+    # correct config unusable in lightworker run 001.
+    ["permission", "model", "provider"],
 )
 def test_validate_rendered_config_raises_when_required_block_missing(
     missing: str,
@@ -162,10 +166,10 @@ def test_render_execution_config_no_temp_leftover_on_validation_failure(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "opencode.json"
-    # Write a body that is valid JSON but missing the "mcp" block.
+    # Valid JSON, but with no `permission` block -- the one §19 makes
+    # load-bearing, because it is what confines the role to its worktree.
     body = json.dumps(
         {
-            "permission": {"read": True},
             "model": "imple01-3060",
             "provider": {"cloud_minimax": {}},
         }

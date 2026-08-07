@@ -28,6 +28,16 @@ allocator:
   # configuration loads. Preflight warns rather than fails when unset.
   probe_role: imple01LW
   config_root: ${MODEL_ALLOCATOR_CONFIG_ROOT}
+  # The client config `render-config` merges into. It emits only `model` and
+  # `provider`; the `permission` block that confines a role to its worktree
+  # (§19) has to already be there. This file belongs to this machine's
+  # steward -- §19 says the worker must not depend on Father knowing its
+  # filesystem -- and `{worktree}` in it is replaced with the execution's
+  # worktree, which differs every time.
+  #
+  # Leave unset and the render produces a config with no permission block,
+  # which is refused: an unconfined role is worse than a stopped one.
+  base_config: ~/lightworker/opencode-base.json
 
 paths:
   repository_root: ${LIGHTWORKER_REPOSITORY_ROOT}

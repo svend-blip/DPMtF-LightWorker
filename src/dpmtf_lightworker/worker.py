@@ -147,7 +147,7 @@ CATEGORY_PATCH_GENERATION_FAILED: str = "PATCH_GENERATION_FAILED"
 # criterion can grep.
 # ---------------------------------------------------------------------------
 
-RenderConfigCallable = Callable[[AllocatorAdapter, str, str], str]
+RenderConfigCallable = Callable[..., str]
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +442,16 @@ class WorkerLoop:
         )
         try:
             published_path = self._render_config(
-                self._allocator, target_role, config_output
+                self._allocator,
+                target_role,
+                config_output,
+                # The allocator renders only model and provider. The
+                # permission block that confines the role to its worktree
+                # (§19) comes from a base config the machine's steward owns
+                # and worker.yaml names; the worktree is bound into it here
+                # because it differs on every execution.
+                str(self._config.allocator.base_config or ""),
+                worktree_str,
             )
         except EnvelopeError as exc:
             self._report_failure(

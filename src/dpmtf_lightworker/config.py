@@ -76,6 +76,19 @@ class AllocatorSection:
     command: str
     client: str
     config_root: str
+    # Path to the client config the allocator merges into. `render-config`
+    # emits only `model` and `provider`; the `permission` block that confines
+    # a role to its worktree (§19) has to already be there. The file belongs
+    # to the machine's steward -- §19 is explicit that the worker must not
+    # depend on Father knowing its filesystem -- so it is named here rather
+    # than sent in the envelope.
+    #
+    # Optional, and empty means "render into an empty directory", which is
+    # what every worker.yaml written before 2026-08-07 asks for. Those
+    # produce a config with no permission block; the render then fails
+    # validation with a message naming the missing block, which is the right
+    # outcome -- an unconfined role is worse than a stopped one.
+    base_config: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +273,26 @@ def _parse_network(section: Mapping[str, Any], source: str) -> NetworkSection:
     )
 
 
+def _optional_str(
+    section: Mapping[str, Any], key: str, section_name: str, source: str
+) -> str:
+    """A string that may be absent. Absent is "", present-but-wrong raises.
+
+    An absent key is a configuration that predates the setting. A key
+    present with the wrong type is a typo, and returning "" for it would
+    silently drop what the operator meant to say.
+    """
+    if key not in section or section[key] is None:
+        return ""
+    value = section[key]
+    if not isinstance(value, str):
+        raise WorkerConfigError(
+            f"worker configuration file {source}: {section_name}.{key} must "
+            f"be a string, got {type(value).__name__}"
+        )
+    return value
+
+
 def _parse_allocator(
     section: Mapping[str, Any], source: str
 ) -> AllocatorSection:
@@ -267,6 +300,7 @@ def _parse_allocator(
         command=_required_str(section, "command", "allocator", source),
         client=_required_str(section, "client", "allocator", source),
         config_root=_required_str(section, "config_root", "allocator", source),
+        base_config=_optional_str(section, "base_config", "allocator", source),
     )
 
 
