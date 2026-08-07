@@ -205,3 +205,29 @@ def test_absent_and_broken_allocator_give_different_reasons(tmp_path: Path) -> N
 
     absent = _run_in(repo, {"PATH": "/usr/bin:/bin"})["model_allocator_command"]
     assert "not found on PATH" in absent["reason"]
+
+
+def test_data_directories_follow_the_config_not_a_hardcoded_triple(tmp_path: Path) -> None:
+    """The check used /var/lib, /var/log and /tmp regardless of worker.yaml.
+
+    On a worker without passwordless sudo every root sits under $HOME, so it
+    reported three directories missing while all the configured ones existed.
+    """
+    roots = tmp_path / "roots"
+    (roots / "repos").mkdir(parents=True)
+    (roots / "logs").mkdir(parents=True)
+    repo = _fixture_repo(tmp_path, worker_yaml=(
+        "father:\n  base_url: http://127.0.0.1:1\n"
+        f"paths:\n  repository_root: {roots}/repos\n  log_root: {roots}/logs\n"))
+    check = _run_in(repo)["worker_data_directories"]
+    assert check["status"] == "pass", f"configured dirs exist but: {check['reason']}"
+    assert "/var/lib" not in check["reason"]
+
+
+def test_a_missing_configured_directory_is_reported_by_name(tmp_path: Path) -> None:
+    repo = _fixture_repo(tmp_path, worker_yaml=(
+        "father:\n  base_url: http://127.0.0.1:1\n"
+        "paths:\n  repository_root: /nonexistent/repos\n"))
+    check = _run_in(repo)["worker_data_directories"]
+    assert check["status"] == "fail"
+    assert "/nonexistent/repos" in check["reason"]

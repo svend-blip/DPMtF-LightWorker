@@ -187,16 +187,34 @@ else
 fi
 
 # 14. Worker data directories
+#
+# Reads the `paths:` block of worker.yaml. It used to check a hardcoded
+# /var/lib, /var/log and /tmp triple and ignore the configuration entirely,
+# so on svend3060 — where every root sits under $HOME by design, because the
+# worker has no passwordless sudo — it reported three directories missing
+# while all five configured ones existed. A check that measures somewhere
+# other than where the config points is answering a question nobody asked.
 MISSING_DIRS=""
-for d in /var/lib/dpmtf-lightworker /var/log/dpmtf-lightworker /tmp/dpmtf-lightworker; do
-    if [ ! -d "$d" ]; then
-        MISSING_DIRS="$MISSING_DIRS $d"
-    fi
-done
-if [ -z "$MISSING_DIRS" ]; then
-    emit_check "worker_data_directories" "pass" "true" "all worker directories present"
+CONFIGURED_DIRS=""
+if [ -f "$REPO_ROOT/config/worker.yaml" ]; then
+    CONFIGURED_DIRS=$(sed -n '/^paths:/,/^[^[:space:]#]/p' "$REPO_ROOT/config/worker.yaml" \
+        | grep -E '^[[:space:]]+[a-z_]+:' \
+        | sed -E 's/^[[:space:]]*[a-z_]+:[[:space:]]*//; s/[[:space:]]*(#.*)?$//' \
+        | grep -v '^$' || true)
+fi
+if [ -z "$CONFIGURED_DIRS" ]; then
+    emit_check "worker_data_directories" "fail" "true" "no paths: block in config/worker.yaml"
 else
-    emit_check "worker_data_directories" "warn" "false" "missing directories:$MISSING_DIRS"
+    for d in $CONFIGURED_DIRS; do
+        if [ ! -d "$d" ]; then
+            MISSING_DIRS="$MISSING_DIRS $d"
+        fi
+    done
+    if [ -z "$MISSING_DIRS" ]; then
+        emit_check "worker_data_directories" "pass" "true" "all configured worker directories present"
+    else
+        emit_check "worker_data_directories" "fail" "true" "missing configured directories:$MISSING_DIRS"
+    fi
 fi
 
 # 15. Repository read access
