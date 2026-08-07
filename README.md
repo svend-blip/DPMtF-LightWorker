@@ -11,6 +11,43 @@ This repository currently contains only the **envelope layer** specified in
 adapter, the Git isolation layer, the tmux/OpenCode transport and the Father
 integration. See `GOAL.md` §43 for the planned phases.
 
+## Place in the DPMtF Ecosystem
+
+Four components, one machine boundary:
+
+```
+   model-allocator                  model-allocator
+   (Father's copy)                  (worker's copy)
+         │ resolves role→model            │
+         ▼                                ▼
+   DPMtF-WebUI ("Father") ◄──────── DPMtF-LightWorker
+   flows · dispatch · evidence      polls Father over Tailscale,
+   gates · SQLite · port 9130       executes one role at a time in
+         │                          disposable worktrees
+         └── mcp-light (port 9135)
+             read-only context: loopback for Father's own
+             roles, a second tailnet instance for workers
+```
+
+| Component | Depends on | Provides |
+|-----------|-----------|----------|
+| model-allocator | its own machine's `models.yaml`/`roles.yaml` | role→model resolution, runtime lifecycle, client configs |
+| DPMtF-WebUI | model-allocator (same machine), SQLite | flows, dispatch, evidence gates, LightWorker endpoints, watchdog |
+| mcp-light | read access to DPMtF-WebUI's files and database | governance/flow/verdict lookup over MCP |
+| DPMtF-LightWorker | model-allocator (worker machine), Father reachable over Tailscale | remote role execution |
+
+**Install order — each step's preflight checks the one before it:**
+
+1. **model-allocator** — on every machine that runs models (Father and
+   each worker), with that machine's own config files.
+2. **DPMtF-WebUI** — on Father: `init_db` → `migrate` → uvicorn on 9130.
+3. **mcp-light** — on Father (optional but standard): loopback unit, plus
+   the tailnet unit if remote workers should reach it.
+4. **DPMtF-LightWorker** — on each worker: venv → `worker.yaml` → auth
+   token → base client config → `preflight.sh` 16/16 → daemon.
+
+Each repository's own Installation section covers its steps in detail.
+
 ## Repository Layout
 
 ```text
@@ -34,6 +71,57 @@ DPMtF-LightWorker/
 
 The default test suite runs without GPU, network, a real Father, a real
 Model Allocator, a real OpenCode or a real tmux. See `GOAL.md` §29.
+
+## Installation (worker machine)
+
+Prerequisites: model-allocator installed and configured on THIS machine
+(step 1 of the ecosystem order), Father reachable over Tailscale, git and
+tmux present. Then:
+
+```bash
+git clone https://github.com/svend-blip/DPMtF-LightWorker.git
+cd DPMtF-LightWorker
+python3 -m venv venv && ./venv/bin/pip install -e .
+
+cp config/worker.example.yaml config/worker.yaml   # edit for this machine
+echo 'LIGHTWORKER_AUTH_TOKEN="<token from Father>"' > ~/.lightworker-auth
+cp <your opencode base config> ~/lightworker/opencode-base.json
+
+bash scripts/preflight.sh          # must be 16/16 before the daemon starts
+```
+
+The base client config is required — see "The Base Client Config" below.
+A render without a `permission` block is refused by design.
+
+## Running the Worker
+
+The daemon polls Father and executes one role at a time. It runs in a tmux
+session the steward starts (a systemd unit needs nothing more than a user
+unit — see mcp-light's units for the pattern — but is not yet written):
+
+```bash
+tmux new-session -d -s lightworker-daemon -c ~/DPMtF-LightWorker \
+  bash -lc 'set -a; . ~/.lightworker-auth; set +a;
+            export PYTHONUNBUFFERED=1;
+            exec ./venv/bin/dpmtf-lightworker 2>&1 \
+              | tee -a ~/lightworker/logs/daemon.log'
+```
+
+`PYTHONUNBUFFERED` matters: piped through `tee`, Python block-buffers
+stdout, and the log otherwise stays empty until the process dies — which
+is exactly when you need it.
+
+**Stopping from Father's UI:** DPMtF-WebUI's *Stop tmux* kills this
+daemon session and any `dpmtf-*` execution session over ssh; *Stop
+servers* resolves the role's alias ON this machine (its `roles.yaml`, not
+Father's stored value) and stops that runtime. Restart is the tmux
+command above.
+
+**Watchdog:** Father's `chain-watchdog.service` watches every flow
+permanently — remote roles prove life through execution heartbeats, and
+are never auto-nudged (a re-sent signal would mint a second execution
+offer). A claimed execution with 90s of heartbeat silence draws a
+CRITICAL log line for the Human.
 
 ## Running the Test Suite
 
