@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
@@ -47,10 +48,26 @@ def render_execution_config(
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    fd, tmp_name = tempfile.mkstemp(prefix=".opencode-", dir=str(target.parent))
-    tmp_path = Path(tmp_name)
+    # A temporary DIRECTORY, not a temporary file. `mkstemp` creates a
+    # zero-byte file, and `render-config` treats an existing output as one to
+    # merge into — §9 requires it to preserve an existing permission and mcp
+    # block. Handed an empty file it refuses:
+    #
+    #   ERROR: existing opencode.json is not valid JSON:
+    #   Expecting value: line 1 column 1 (char 0)
+    #
+    # lightworker run 001 found this on the first real execution, at
+    # RENDERING_CLIENT_CONFIG. Both sides were right on their own: this
+    # function reserves its temp path so the publish is atomic, and the
+    # allocator preserves what it finds. They disagreed about whether the
+    # output path exists beforehand.
+    #
+    # The directory sits beside the target, so `os.replace` is still a rename
+    # within one filesystem and the publish stays atomic.
+    tmp_dir = Path(tempfile.mkdtemp(prefix=".opencode-", dir=str(target.parent)))
+    tmp_path = tmp_dir / target.name
+    tmp_name = str(tmp_path)
     try:
-        os.close(fd)
         try:
             allocator.render_config(
                 role=role, client="opencode", output=tmp_name
@@ -70,13 +87,15 @@ def render_execution_config(
         return str(target)
     except BaseException:
         # On any failure (validation, allocator, IO), remove the temp
-        # file so nothing is left behind. The target path was never
+        # directory so nothing is left behind. The target path was never
         # created.
         try:
-            tmp_path.unlink()
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         except OSError:
             pass
         raise
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def validate_rendered_config(text: str) -> None:

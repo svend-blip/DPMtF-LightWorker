@@ -196,10 +196,41 @@ def test_render_execution_config_uses_temp_in_same_directory_as_target(
 
     allocator = RecordingAllocator(_valid_body())
     render_execution_config(allocator, "imple01", str(target))
-    # The temp path handed to the allocator must be in the same directory
-    # as the target, so os.replace is a rename within one filesystem.
-    assert captured["output_dir"] == str(tmp_path)
-    assert captured["output_dir"] == os.path.dirname(str(target))
+    # The temp path must sit beside the target so os.replace is a rename
+    # within one filesystem. It is inside a temporary DIRECTORY there, not a
+    # temporary file: `render-config` merges into an existing output to
+    # preserve the permission and mcp blocks (§9), and a zero-byte file makes
+    # it refuse with "existing opencode.json is not valid JSON". lightworker
+    # run 001 hit exactly that on the first real execution.
+    assert os.path.dirname(captured["output_dir"]) == str(tmp_path), \
+        f'temp lives at {captured["output_dir"]}, not beside {tmp_path}'
+    assert captured["output_dir"] != str(tmp_path), \
+        "the temp path is directly in the target directory again"
+
+
+def test_the_allocator_is_handed_a_path_that_does_not_exist_yet(
+    tmp_path: Path,
+) -> None:
+    """`render-config` refuses an existing output it cannot parse.
+
+    It preserves what it finds (§9), so handing it the zero-byte file
+    `mkstemp` leaves behind makes it fail with "existing opencode.json is not
+    valid JSON". Found on lightworker run 001 at RENDERING_CLIENT_CONFIG:
+    both sides were correct alone and disagreed about whether the output path
+    exists beforehand.
+    """
+    target = tmp_path / "opencode.json"
+    seen: dict = {}
+
+    class ExistenceCheckingAllocator(FakeAllocator):
+        def render_config(self, *, role: str, client: str, output: str) -> str:
+            seen["existed"] = os.path.exists(output)
+            return super().render_config(role=role, client=client, output=output)
+
+    render_execution_config(
+        ExistenceCheckingAllocator(_valid_body()), "imple01", str(target))
+    assert seen["existed"] is False, \
+        "the allocator was handed an output path that already existed"
 
 
 def test_render_execution_config_raises_when_allocator_writes_nothing(
