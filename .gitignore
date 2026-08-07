@@ -10,3 +10,7 @@ build/
 dist/
 .coverage
 htmlcov/
+
+# Machine-local worker configuration. §27 forbids committing
+# machine-specific absolute paths; worker.example.yaml is the template.
+config/worker.yaml
