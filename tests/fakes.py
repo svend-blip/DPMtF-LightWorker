@@ -174,6 +174,7 @@ class FakeFather:
         self.completed: int = 0
         self.failed: int = 0
         self.results: List[Any] = []
+        self.execution_heartbeats: int = 0
 
     def next_execution(self) -> Any:
         return self._offered
@@ -189,6 +190,10 @@ class FakeFather:
         return None
 
     def execution_heartbeat(self, execution_id: str, *, attempt_id: str) -> Any:
+        # Counted: whether the worker stays audible during a long wait is the
+        # property under test, and silence and liveness look identical
+        # without a counter.
+        self.execution_heartbeats += 1
         return None
 
     def report_event(self, execution_id: str, *, event: Any) -> Any:

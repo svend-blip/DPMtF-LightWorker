@@ -721,7 +721,9 @@ class WorkerLoop:
         # 14. Collect the result.
         self._transition(WorkerState.COLLECTING_RESULT)
         relative = envelope.handoff.expected_deliverable
-        content, why = self._await_deliverable(worktree_str, relative)
+        content, why = self._await_deliverable(
+            worktree_str, relative, execution_id, attempt_id
+        )
         if content is None:
             self._report_failure(
                 execution_id=execution_id,
@@ -1039,7 +1041,11 @@ class WorkerLoop:
         )
 
     def _await_deliverable(
-        self, worktree: str, relative: str
+        self,
+        worktree: str,
+        relative: str,
+        execution_id: str = "",
+        attempt_id: str = "",
     ) -> "tuple[Optional[str], str]":
         """Wait for the role to write its deliverable. Returns (content, why).
 
@@ -1072,7 +1078,33 @@ class WorkerLoop:
         # Counting polls also makes the wait honest about what it does: it
         # looks a fixed number of times, `DELIVERABLE_POLL_SECONDS` apart.
         attempts = max(1, int(self._deliverable_timeout() / DELIVERABLE_POLL_SECONDS))
-        for _ in range(attempts):
+
+        # Heartbeat while waiting. This wait IS the execution -- up to thirty
+        # minutes in which the worker made no request at all, so Father could
+        # not tell a live role from a dead worker. The endpoints and the
+        # table existed from day one (§20) and nothing ever called them; the
+        # planned claim-timeout on Father's side NEEDS this signal, or it
+        # would kill live, slow executions along with dead ones.
+        #
+        # Paced by poll count, not by the clock: the clock is injected and
+        # the suite freezes it, which is the same reason the wait itself
+        # counts iterations. Best-effort by design -- a missed heartbeat
+        # must never fail a role that is working.
+        heartbeat_every = max(
+            1,
+            int(
+                self._config.worker.heartbeat_interval_seconds
+                / DELIVERABLE_POLL_SECONDS
+            ),
+        )
+        for attempt in range(attempts):
+            if execution_id and attempt and attempt % heartbeat_every == 0:
+                try:
+                    self._father.execution_heartbeat(
+                        execution_id, attempt_id=attempt_id
+                    )
+                except Exception:  # noqa: BLE001 - liveness, never fatal
+                    pass
             try:
                 stat = target.stat()
                 seen = True

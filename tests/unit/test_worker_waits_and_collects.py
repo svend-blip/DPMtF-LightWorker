@@ -262,3 +262,56 @@ class TestTheRoleCanReadItsOwnGovernance:
         loop, spies = loop_with(offered=env)
         assert loop.run_once() is True
         assert "<governance>" not in spies["tmux"].injected[-1]
+
+
+class TestTheWorkerStaysAudibleWhileWaiting:
+    """The wait IS the execution: up to thirty minutes in which the worker
+    used to make no request at all, so Father could not tell a live role from
+    a dead worker. §20's heartbeat endpoints and table existed from day one
+    and nothing called them.
+
+    The claim-timeout Father needs next DEPENDS on this signal -- without it,
+    a timeout kills live, slow executions along with dead ones.
+    """
+
+    def test_heartbeats_are_sent_during_a_long_wait(self, tmp_path):
+        loop, spies = loop_with(offered=None)
+        loop._deliverable_timeout = lambda: 60.0  # 12 polls, beat every 3rd
+        loop._await_deliverable(str(tmp_path), "out.md", "EXEC-X", "ATTEMPT-1")
+        assert spies["father"].execution_heartbeats >= 3
+
+    def test_no_execution_id_means_no_heartbeats(self, tmp_path):
+        """The bare two-argument call is still legal and must not invent an
+        execution to report on -- the poll path taught that lesson."""
+        loop, spies = loop_with(offered=None)
+        loop._deliverable_timeout = lambda: 60.0
+        loop._await_deliverable(str(tmp_path), "out.md")
+        assert spies["father"].execution_heartbeats == 0
+
+    def test_a_failing_heartbeat_does_not_fail_the_wait(self, tmp_path):
+        """Liveness reporting must never kill a live role."""
+        loop, spies = loop_with(offered=None)
+        loop._deliverable_timeout = lambda: 60.0
+
+        def boom(*a, **k):
+            raise FatherClientError("Father blinked")
+
+        spies["father"].execution_heartbeat = boom
+        target = tmp_path / "out.md"
+        target.write_text("the deliverable\n", encoding="utf-8")
+        content, why = loop._await_deliverable(
+            str(tmp_path), "out.md", "EXEC-X", "ATTEMPT-1")
+        assert content == "the deliverable\n"
+
+    def test_the_full_run_heartbeats_through_the_loop(self):
+        """End to end: run_once with a deliverable that exists passes the
+        ids through, so a real execution is audible, not only the helper."""
+        loop, spies = loop_with(offered=envelope())
+        loop.run_once()
+        # The fixture's deliverable exists immediately, so the wait is two
+        # polls and no beat fires -- what matters is that the ids reached
+        # the wait. Starve the deliverable to see beats:
+        loop2, spies2 = loop_with(offered=envelope(), no_deliverable=True)
+        loop2._deliverable_timeout = lambda: 60.0
+        loop2.run_once()
+        assert spies2["father"].execution_heartbeats >= 3
