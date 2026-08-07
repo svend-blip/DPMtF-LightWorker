@@ -37,6 +37,7 @@ claim about the system.
 from __future__ import annotations
 
 import json
+import os
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional
 from urllib import error as urllib_error
@@ -73,6 +74,7 @@ class FatherClient:
         worker_id: str,
         transport: Optional[Transport] = None,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+        auth_token: Optional[str] = None,
     ) -> None:
         if not base_url:
             raise ValueError("FatherClient.base_url must not be empty")
@@ -85,9 +87,10 @@ class FatherClient:
         self._worker_id = worker_id
         self._timeout_seconds = timeout_seconds
         if transport is None:
-            self._transport: Transport = _make_default_transport(
+            self._transport: Transport = _make_default_transport(  # noqa: E501
                 base_url=self._base_url,
                 timeout_seconds=self._timeout_seconds,
+                auth_token=auth_token or os.environ.get("LIGHTWORKER_AUTH_TOKEN"),
             )
         else:
             self._transport = transport
@@ -275,13 +278,19 @@ class FatherClient:
 
 
 def _make_default_transport(
-    *, base_url: str, timeout_seconds: float
+    *, base_url: str, timeout_seconds: float, auth_token: Optional[str] = None
 ) -> Transport:
     """Build the default urllib-backed transport.
 
-    The returned callable closes over ``base_url`` and
-    ``timeout_seconds``. Construction does not connect — the
-    request fires only when the returned callable is invoked.
+    The returned callable closes over ``base_url``, ``timeout_seconds``
+    and the auth token. Construction does not connect — the request
+    fires only when the returned callable is invoked.
+
+    §27 requires the worker's identity to be authenticated and says
+    Tailscale membership must not be the sole authorization mechanism.
+    The token goes in the ``Authorization`` header rather than the body:
+    request bodies are logged and echoed in error messages, headers far
+    less often, and ``Bearer`` is where a reader looks for a credential.
     """
 
     def transport(method: str, path: str, body: Any) -> Any:
@@ -294,6 +303,8 @@ def _make_default_transport(
         else:
             data = json.dumps(body).encode("utf-8")
             headers = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
         request = urllib_request.Request(
             url=url,
             data=data,
