@@ -140,7 +140,7 @@ def test_runner_receives_list_and_timeout() -> None:
     or stop is still a defect worth surfacing fast."""
     runner = FakeRunner(response=(0, "ok", ""))
     adapter = AllocatorAdapter(command="model-allocator", runner=runner, timeout=4.2)
-    adapter.validate_alias("a", "c")
+    adapter.validate("a", "c")
     argv, timeout = runner.calls[0]
     assert isinstance(argv, list)
     assert timeout == 4.2
