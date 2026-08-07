@@ -150,10 +150,32 @@ else
 fi
 
 # 9. Allocator configuration loading
-if try_silent model-allocator preflight --role imple01 --client opencode; then
-    emit_check "allocator_configuration_loading" "pass" "true" "allocator preflight succeeded"
+#
+# The role comes from the configuration, not from this file. §25 says "for
+# CONFIGURED test aliases", and a hardcoded name is a promise about somebody
+# else's roles.yaml. It read `--role imple01` until 2026-08-07, when the
+# worker's role was renamed to imple01LW to match bridge_roles: the allocator
+# was healthy and answering READY, and this check called it broken.
+#
+# A worker does not know which role it will be asked to run — that arrives in
+# the envelope. `allocator.probe_role` names one to prove the configuration
+# loads at all.
+PROBE_ROLE=""
+PROBE_CLIENT=""
+if [ -f "$REPO_ROOT/config/worker.yaml" ]; then
+    PROBE_ROLE=$(sed -n '/^allocator:/,/^[^[:space:]#]/p' "$REPO_ROOT/config/worker.yaml" \
+        | grep -E '^[[:space:]]+probe_role:' \
+        | sed -E 's/^[[:space:]]*probe_role:[[:space:]]*//; s/[[:space:]]*(#.*)?$//' || true)
+    PROBE_CLIENT=$(sed -n '/^allocator:/,/^[^[:space:]#]/p' "$REPO_ROOT/config/worker.yaml" \
+        | grep -E '^[[:space:]]+client:' \
+        | sed -E 's/^[[:space:]]*client:[[:space:]]*//; s/[[:space:]]*(#.*)?$//' || true)
+fi
+if [ -z "$PROBE_ROLE" ]; then
+    emit_check "allocator_configuration_loading" "warn" "false" "no allocator.probe_role in config/worker.yaml — allocator config not exercised"
+elif try_silent model-allocator preflight --role "$PROBE_ROLE" --client "${PROBE_CLIENT:-opencode}"; then
+    emit_check "allocator_configuration_loading" "pass" "true" "allocator preflight succeeded for role $PROBE_ROLE"
 else
-    emit_check "allocator_configuration_loading" "fail" "true" "allocator preflight failed or not installed"
+    emit_check "allocator_configuration_loading" "fail" "true" "allocator preflight failed for role $PROBE_ROLE"
 fi
 
 # 10. Selected client installation

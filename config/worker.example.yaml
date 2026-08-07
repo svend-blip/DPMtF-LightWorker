@@ -24,6 +24,9 @@ network:
 allocator:
   command: model-allocator
   client: opencode
+  # A role in the worker's own roles.yaml, used only to prove the allocator
+  # configuration loads. Preflight warns rather than fails when unset.
+  probe_role: imple01LW
   config_root: ${MODEL_ALLOCATOR_CONFIG_ROOT}
 
 paths:
