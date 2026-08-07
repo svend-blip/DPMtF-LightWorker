@@ -777,36 +777,30 @@ class WorkerLoop:
             )
         except FatherClientError as exc:
             if exc.refused:
-                # Father answered and declined. Reporting a failure against
-                # that is arguing with a verdict: the execution is already
-                # terminal on Father's side, so the fail cannot land -- it
-                # came back 500 -- and the worker did not fail, it reported
-                # something Father would not take.
+                # Father answered and declined. That is not a worker fault,
+                # and the failure is recorded as a refusal so the record says
+                # which of the two it was.
                 #
-                # Record it locally, clean up, and stop. The 422's own detail
-                # says what was wrong with the result, and Father has it.
-                self._record_event(
-                    EventType.ROLE_EXECUTION_FAILED,
-                    payload={
-                        "category": CATEGORY_RESULT_REPORT_FAILED,
-                        "failure": str(exc),
-                        "refused_by_father": True,
-                        "last_state": self._state.value,
-                    },
-                    execution_id=execution_id,
-                    attempt_id=attempt_id,
-                    target_role=target_role,
-                    model_alias=envelope.model_alias,
-                    client=envelope.client,
-                )
+                # It IS still reported. An earlier version stopped here on the
+                # reasoning that the execution was already terminal so the
+                # report could not land -- true only when the completion had
+                # been recorded before being judged. A completion refused by
+                # the endpoint's own validation is rejected BEFORE anything is
+                # recorded, so the execution stays `claimed` forever, and a
+                # claimed execution blocks every future offer to this worker.
+                #
+                # EXEC-013 jammed the queue exactly that way: the role had
+                # produced its deliverable, Father refused it on a stale
+                # validator, and nothing on either side could close it.
+                #
+                # `_report_failure` already swallows a transport error from
+                # `fail`, so a genuinely-terminal execution answering 409 costs
+                # nothing here.
                 sys.stderr.write(
                     f"dpmtf-lightworker: Father refused the result for "
                     f"{execution_id}: {exc}\n"
                 )
                 sys.stderr.flush()
-                self._transition(WorkerState.ROLE_EXECUTION_FAILED)
-                self._cleanup(execution_id, session_name)
-                return
             self._report_failure(
                 execution_id=execution_id,
                 attempt_id=attempt_id,
@@ -814,7 +808,10 @@ class WorkerLoop:
                 model_alias=envelope.model_alias,
                 client=envelope.client,
                 category=CATEGORY_RESULT_REPORT_FAILED,
-                failure=str(exc),
+                failure=(
+                    ("Father refused the result: " if exc.refused
+                     else "could not report the result: ") + str(exc)
+                ),
                 payload=payload,
                 last_state=self._state,
             )

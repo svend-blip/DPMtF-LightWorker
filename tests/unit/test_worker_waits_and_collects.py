@@ -115,10 +115,20 @@ class TestTheResultItReports:
 
 class TestARefusedResultIsNotAWorkerFailure:
 
-    def test_a_422_does_not_produce_a_failure_report(self):
-        """Father answering 'no' is Father working. Reporting a failure
-        against it cannot even land -- the execution is terminal on Father's
-        side by then, which came back 500."""
+    def test_a_422_still_terminates_the_execution(self):
+        """A refused completion MUST be reported.
+
+        An earlier version stopped without reporting, reasoning that the
+        execution was already terminal so the report could not land. That
+        holds only when the completion was recorded before being judged. A
+        completion the endpoint's own validation rejects is refused BEFORE
+        anything is recorded, so the execution stays `claimed` forever -- and
+        a claimed execution blocks every future offer to this worker.
+
+        EXEC-013 jammed the queue exactly that way: the role had produced its
+        deliverable, Father refused it on a stale validator, and nothing on
+        either side could close it.
+        """
         loop, spies = loop_with(offered=envelope())
         father = spies["father"]
 
@@ -127,7 +137,20 @@ class TestARefusedResultIsNotAWorkerFailure:
 
         father.complete = refuse
         loop.run_once()
-        assert father.failed == 0
+        assert father.failed == 1, "the execution would stay claimed forever"
+
+    def test_a_refusal_is_recorded_as_a_refusal_not_a_worker_fault(self):
+        """Both reach Father as a failure; the record must still say which."""
+        loop, spies = loop_with(offered=envelope())
+
+        def refuse(*a, **k):
+            raise FatherClientError("refused with 422: nope", status=422)
+
+        spies["father"].complete = refuse
+        loop.run_once()
+        failed = [e for e in loop._events
+                  if e.event_type.value == "ROLE_EXECUTION_FAILED"]
+        assert failed and "refused" in failed[-1].payload["failure"].lower()
 
     def test_a_500_still_produces_a_failure_report(self):
         """Father broken is not Father deciding."""
