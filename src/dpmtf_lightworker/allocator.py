@@ -129,7 +129,16 @@ class AllocatorAdapter:
 
     def _call(self, argv: list[str], failure_type: type[AllocatorError]) -> str:
         try:
-            returncode, stdout, stderr = self._runner(argv, self._timeout)
+            # preflight and run may have to COLD-START a model server --
+            # 21.7 GB of 35B weights took minutes on svend3060, and EXEC-016
+            # died at 30.0s for exactly this: the steward had pressed Stop
+            # servers, and the first execution after it found a cold card.
+            # Same defect family as the llama_SG note "start-timeout was too
+            # short". Everything else keeps the tight timeout: a slow
+            # resolve or render IS a defect worth surfacing fast.
+            op_timeout = (600.0 if argv[1:2] and argv[1] in ("preflight", "run")
+                          else self._timeout)
+            returncode, stdout, stderr = self._runner(argv, op_timeout)
         except (OSError, subprocess.SubprocessError) as exc:
             raise AllocatorNotAvailable(
                 f"allocator command failed to start: {exc}"
