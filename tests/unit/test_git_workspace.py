@@ -522,3 +522,66 @@ def test_runner_subprocess_start_failure_raises_repository_fetch_failed(
     with pytest.raises(RepositoryFetchFailed) as exc:
         w.ensure_mirror("trade-ui", "https://nonexistent.invalid/repo.git")
     assert exc.value.category == "REPOSITORY_FETCH_FAILED"
+
+
+class TestExcludeFromStatus:
+    """Worker-written files must not read as the role's mess.
+
+    The governance file and the deliverable are untracked, so a handoff
+    saying "the tree must be clean when you finish" blamed the role for
+    files it never chose to create. Git's per-worktree exclude hides them
+    from status without touching the repository or the patch.
+    """
+
+    def _real_repo(self, tmp_path):
+        import subprocess
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for argv in (["git", "init", "-q"],
+                     ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                      "commit", "-q", "--allow-empty", "-m", "seed"]):
+            subprocess.run(argv, cwd=repo, check=True, capture_output=True)
+        return repo
+
+    def test_excluded_paths_vanish_from_status(self, tmp_path):
+        import subprocess
+        from dpmtf_lightworker.git_workspace import GitWorkspace
+        repo = self._real_repo(tmp_path)
+        (repo / ".lightworker").mkdir()
+        (repo / ".lightworker" / "gov.md").write_text("g", encoding="utf-8")
+        (repo / "results").mkdir()
+        (repo / "results" / "r.md").write_text("r", encoding="utf-8")
+        ws = GitWorkspace(repository_root=str(tmp_path),
+                          worktree_root=str(tmp_path))
+        ws.exclude_from_status(str(repo), [".lightworker/", "results/r.md"])
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo,
+            capture_output=True, text=True, check=True).stdout
+        assert ".lightworker" not in status
+        assert "results" not in status
+
+    def test_it_works_before_the_files_exist(self, tmp_path):
+        """The worker excludes at worktree creation, before the role has
+        written anything. Patterns must not require the file."""
+        import subprocess
+        from dpmtf_lightworker.git_workspace import GitWorkspace
+        repo = self._real_repo(tmp_path)
+        ws = GitWorkspace(repository_root=str(tmp_path),
+                          worktree_root=str(tmp_path))
+        ws.exclude_from_status(str(repo), ["late/file.md"])
+        (repo / "late").mkdir()
+        (repo / "late" / "file.md").write_text("x", encoding="utf-8")
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo,
+            capture_output=True, text=True, check=True).stdout
+        assert "late" not in status
+
+    def test_a_broken_runner_never_raises(self, tmp_path):
+        """Cosmetic, never fatal: a role without the exclusions is mildly
+        noisier, which is not worth failing an execution over."""
+        from dpmtf_lightworker.git_workspace import GitWorkspace
+        ws = GitWorkspace(repository_root=str(tmp_path),
+                          worktree_root=str(tmp_path),
+                          runner=lambda argv, cwd: (_ for _ in ()).throw(
+                              RuntimeError("boom")))
+        ws.exclude_from_status(str(tmp_path), [".lightworker/"])  # må ikke rejse

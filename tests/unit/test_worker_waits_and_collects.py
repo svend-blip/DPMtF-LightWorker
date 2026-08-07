@@ -315,3 +315,16 @@ class TestTheWorkerStaysAudibleWhileWaiting:
         loop2._deliverable_timeout = lambda: 60.0
         loop2.run_once()
         assert spies2["father"].execution_heartbeats >= 3
+
+
+def test_the_worker_excludes_its_own_files_from_the_roles_status():
+    """The call must happen per execution, with the actual deliverable path
+    -- a fixed pattern list would silently miss a flow whose deliverables
+    live elsewhere."""
+    loop, spies = loop_with(offered=envelope())
+    calls = []
+    spies["git"].exclude_from_status = lambda wt, pats: calls.append(pats)
+    loop.run_once()
+    assert calls, "exclude_from_status was never called"
+    assert ".lightworker/" in calls[0]
+    assert "docs/dpmtf/403_IMPLEMENTATION.md" in calls[0]

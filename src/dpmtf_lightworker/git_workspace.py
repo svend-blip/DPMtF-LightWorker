@@ -175,6 +175,50 @@ class GitWorkspace:
         )
         return head.strip()
 
+    def exclude_from_status(self, worktree: str, patterns: list[str]) -> None:
+        """Hide worker-written files from the role's `git status`. Best-effort.
+
+        The worker writes the governance file (`.lightworker/`) and the role
+        writes its deliverable into the worktree. Both are untracked, so a
+        role or reviewer enforcing "the tree is clean when you finish" sees
+        them as violations the role did not commit. Git's own per-worktree
+        exclude file is the mechanism built for exactly this: it hides paths
+        from status without touching the repository or the patch (git diff
+        reads tracked files only, so the patch never saw them either).
+
+        Resolved through `git rev-parse --git-path info/exclude` because in
+        a linked worktree the exclude file lives under the mirror's
+        `worktrees/<id>/` directory, not under `<worktree>/.git`, and
+        guessing that layout is how such paths go wrong.
+
+        Best-effort by design: a role without the exclusions is mildly
+        noisier, which is never worth failing an execution over.
+        """
+        try:
+            code, out, _err = self._runner(
+                ["git", "rev-parse", "--git-path", "info/exclude"], worktree
+            )
+            if code != 0 or not str(out).strip():
+                return
+            path = Path(str(out).strip())
+            if not path.is_absolute():
+                path = Path(worktree) / path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = (
+                path.read_text(encoding="utf-8") if path.exists() else ""
+            )
+            known = set(existing.split("\n"))
+            fresh = [p for p in patterns if p and p not in known]
+            if not fresh:
+                return
+            with path.open("a", encoding="utf-8") as fh:
+                if existing and not existing.endswith("\n"):
+                    fh.write("\n")
+                for pattern in fresh:
+                    fh.write(pattern + "\n")
+        except Exception:  # noqa: BLE001 - cosmetic, never fatal
+            return
+
     def generate_patch(
         self,
         worktree: str,

@@ -429,6 +429,17 @@ class WorkerLoop:
             client=envelope.client,
         )
 
+        # Hide what the worker and the role will write from `git status`.
+        # The governance file and the deliverable are both untracked, so a
+        # handoff that says "the tree must be clean when you finish" reads
+        # them as the role's mess. Excluding by pattern works before the
+        # files exist, and `git diff` never saw untracked files anyway, so
+        # the patch is unaffected.
+        self._git.exclude_from_status(
+            worktree_str,
+            [".lightworker/", envelope.handoff.expected_deliverable],
+        )
+
         # 6. Allocator preflight.
         self._transition(WorkerState.ALLOCATOR_PREFLIGHT)
         self._record_event(
