@@ -10,7 +10,6 @@ explicitly: TG2 asserts that ``normpath`` accepts the string before
 from __future__ import annotations
 
 import os
-import string
 from pathlib import Path
 
 import pytest
