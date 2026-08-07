@@ -1,0 +1,44 @@
+# lightworker-daemon — the polling loop, as a systemd USER unit.
+#
+# The daemon ran hand-started in a tmux session: one reboot of the worker
+# machine away from a silently absent worker, which from Father's side is
+# indistinguishable from an idle one. A user unit needs no sudo -- the
+# "needs root" assumption in run 001's known-missing list was wrong, as
+# Father's own mcp-light units proved.
+#
+# Install (on the worker):
+#   cp deploy/lightworker-daemon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now lightworker-daemon
+#   loginctl enable-linger $USER      # start at boot without a login
+#
+# Logs: journalctl --user -u lightworker-daemon -f
+# Father's "Stop tmux" button stops this unit over ssh; restart with
+# `systemctl --user start lightworker-daemon`.
+
+[Unit]
+Description=DPMtF LightWorker daemon — polls Father, executes one role at a time
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/svend/DPMtF-LightWorker
+# The auth token, KEY="value" format — the same file the tmux start sourced.
+EnvironmentFile=/home/svend/.lightworker-auth
+# No login shell here, so PATH must carry model-allocator (~/.local/bin)
+# and the usual system paths the allocator's subprocesses expect.
+Environment=PATH=/home/svend/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/svend/DPMtF-LightWorker/venv/bin/dpmtf-lightworker
+
+# Survive Father restarts, crashes and its own bugs. The loop already
+# catches what it can (INTERNAL_WORKER_ERROR); this catches the rest.
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -95,21 +95,22 @@ A render without a `permission` block is refused by design.
 
 ## Running the Worker
 
-The daemon polls Father and executes one role at a time. It runs in a tmux
-session the steward starts (a systemd unit needs nothing more than a user
-unit — see mcp-light's units for the pattern — but is not yet written):
+The daemon polls Father and executes one role at a time. It runs as a
+systemd **user** unit — `deploy/lightworker-daemon.service` — so it
+survives reboots and its own crashes:
 
 ```bash
-tmux new-session -d -s lightworker-daemon -c ~/DPMtF-LightWorker \
-  bash -lc 'set -a; . ~/.lightworker-auth; set +a;
-            export PYTHONUNBUFFERED=1;
-            exec ./venv/bin/dpmtf-lightworker 2>&1 \
-              | tee -a ~/lightworker/logs/daemon.log'
+cp deploy/lightworker-daemon.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now lightworker-daemon
+loginctl enable-linger $USER     # start at boot without a login
+journalctl --user -u lightworker-daemon -f
 ```
 
-`PYTHONUNBUFFERED` matters: piped through `tee`, Python block-buffers
-stdout, and the log otherwise stays empty until the process dies — which
-is exactly when you need it.
+For foreground debugging, the same binary runs in any shell with the auth
+file sourced and `PYTHONUNBUFFERED=1` set (Python block-buffers stdout
+through pipes, and a buffered log stays empty until the process dies —
+exactly when it is needed).
 
 **Stopping from Father's UI:** DPMtF-WebUI's *Stop tmux* kills this
 daemon session and any `dpmtf-*` execution session over ssh; *Stop
