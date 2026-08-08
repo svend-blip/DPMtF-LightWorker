@@ -15,6 +15,11 @@ thresholds.
 
 ``repository_root`` is NEVER touched — it holds the mirrors and must not
 even reach the deletion code path.
+
+Directories under artifact_root and log_root are swept like files — a
+stray directory there is refuse like any other. Accepted as intended by
+the Human at the EXEC-018 merge (2026-08-08) after review flagged the
+contract's narrower "Files" wording.
 """
 
 from __future__ import annotations

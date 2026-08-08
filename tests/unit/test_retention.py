@@ -286,3 +286,43 @@ def test_report_is_frozen_dataclass() -> None:
     )
     with pytest.raises((AttributeError, Exception)):
         report.removed_worktrees = ("x",)  # type: ignore[misc]
+
+
+def test_directories_under_artifact_and_log_roots_are_swept_too(tmp_path):
+    """Directory-sweeping under artifact_root and log_root is INTENDED.
+
+    The review of EXEC-018 found the contract said "Files" while the code
+    also removes directories, and the suite left the distinction unpinned.
+    The Human accepted the behaviour at merge (2026-08-08): a stray
+    directory under those roots is refuse like any other. This test turns
+    that decision from an accepted ambiguity into a bound semantic, so it
+    cannot silently regress either way.
+    """
+    import os
+    import time as _time
+
+    from dpmtf_lightworker.config import PathsSection, RetentionSection
+    from dpmtf_lightworker.retention import sweep
+
+    art = tmp_path / "artifacts"
+    art.mkdir()
+    old_dir = art / "stray-directory"
+    old_dir.mkdir()
+    (old_dir / "junk.bin").write_bytes(b"x")
+    stamp = _time.time() - 60 * 24 * 3600
+    os.utime(old_dir, (stamp, stamp))
+
+    paths = PathsSection(
+        repository_root=str(tmp_path / "repos"),
+        worktree_root=str(tmp_path / "wt"),
+        artifact_root=str(art),
+        log_root=str(tmp_path / "logs"),
+        opencode_config_root=str(tmp_path / "oc"),
+    )
+    retention = RetentionSection(
+        successful_worktree_hours=1, failed_worktree_days=7,
+        artifact_days=14, log_days=30,
+    )
+    report = sweep(paths, retention, now=_time.time())
+    assert str(old_dir) in report.removed_artifacts
+    assert not old_dir.exists()
