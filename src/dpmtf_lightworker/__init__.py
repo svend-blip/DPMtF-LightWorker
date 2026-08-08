@@ -68,6 +68,8 @@ from dpmtf_lightworker.states import WorkerState
 from dpmtf_lightworker.tmux_session import TmuxSession
 from dpmtf_lightworker.worker import WorkerLoop
 
+__version__ = "1.0.0"
+
 __all__ = [
     "AliasValidationFailed",
     "AllocatorAdapter",
