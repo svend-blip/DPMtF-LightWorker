@@ -164,6 +164,12 @@ DELIVERABLE_POLL_SECONDS: float = 5.0
 CLIENT_READY_MARKER: str = "Ask anything"
 CLIENT_READY_TIMEOUT_SECONDS: float = 120.0
 
+# §12 retention: the sweeper runs at daemon start and then hourly, BETWEEN
+# executions -- run_once is synchronous, so a sweep can never overlap a live
+# worktree. Hourly is deliberate against windows measured in days: cheap,
+# and a rebooted worker cleans up immediately. Human decision 2026-08-08.
+RETENTION_SWEEP_INTERVAL_SECONDS: float = 3600.0
+
 # A deliverable (or patch) above this travels as a §23 artifact reference
 # instead of inline in the result JSON. A quarter megabyte is far beyond any
 # reviewable document and far below anything that strains a JSON body -- the
@@ -1433,6 +1439,45 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+def retention_sweep_due(last_sweep: "Optional[float]", now_monotonic: float) -> bool:
+    """True at startup and once the interval has passed since the last sweep."""
+    if last_sweep is None:
+        return True
+    return (now_monotonic - last_sweep) >= RETENTION_SWEEP_INTERVAL_SECONDS
+
+
+def run_retention_sweep(config) -> None:
+    """One §12 sweep with journal logging. Never raises.
+
+    Every removed path is logged individually -- a daemon that deletes must
+    say WHAT it deleted, or a swept file is indistinguishable from a
+    vanished one. The summary line is written even when nothing was removed,
+    as an hourly heartbeat that the sweeper is alive. A sweep failure is
+    logged and skipped: retention is housekeeping, and housekeeping must
+    never take the worker off the network.
+    """
+    try:
+        from dpmtf_lightworker.retention import sweep
+
+        report = sweep(config.paths, config.retention)
+        removed = (list(report.removed_worktrees)
+                   + list(report.removed_artifacts)
+                   + list(report.removed_logs))
+        for path in removed:
+            sys.stderr.write(f"dpmtf-lightworker: retention removed {path}\n")
+        for err in report.errors:
+            sys.stderr.write(f"dpmtf-lightworker: retention error: {err}\n")
+        sys.stderr.write(
+            f"dpmtf-lightworker: retention sweep done: {len(removed)} "
+            f"removed, {len(report.errors)} error(s)\n")
+        sys.stderr.flush()
+    except Exception as exc:  # noqa: BLE001 - housekeeping, never fatal
+        sys.stderr.write(
+            f"dpmtf-lightworker: retention sweep failed, continuing: "
+            f"{exc!r}\n")
+        sys.stderr.flush()
+
+
 def _main() -> int:
     """Console-script entrypoint: load config, build collaborators, loop.
 
@@ -1474,8 +1519,12 @@ def _main() -> int:
         tmux=tmux,
     )
     poll_seconds = max(1, int(config.worker.poll_interval_seconds))
+    last_sweep: Optional[float] = None      # None: sweep at startup too
     try:
         while True:
+            if retention_sweep_due(last_sweep, time.monotonic()):
+                run_retention_sweep(config)
+                last_sweep = time.monotonic()
             try:
                 loop.run_once()
             except Exception as exc:  # noqa: BLE001
