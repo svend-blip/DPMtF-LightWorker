@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import json
 import os
-from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request

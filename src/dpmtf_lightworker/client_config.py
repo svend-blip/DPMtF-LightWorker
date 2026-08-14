@@ -7,7 +7,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from dpmtf_lightworker.errors import ClientConfigRenderFailed
 
