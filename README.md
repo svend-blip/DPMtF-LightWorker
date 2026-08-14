@@ -6,10 +6,11 @@ role-execution envelope from DPMtF Father, executes it inside a disposable
 Git worktree under a worker-local Model Allocator, and returns a structured
 result.
 
-This repository currently contains only the **envelope layer** specified in
-`GOAL.md` §13. Later phases will add the worker loop, the Model Allocator
-adapter, the Git isolation layer, the tmux/OpenCode transport and the Father
-integration. See `GOAL.md` §43 for the planned phases.
+The worker is complete (v1.0.0): envelope validation, the worker loop, the
+Model Allocator adapter, the Git isolation layer, the tmux/OpenCode
+transport, the Father client and the §12 retention sweeper are all
+implemented and live-proven against Father. `GOAL.md` remains the read-only
+specification the implementation is measured against.
 
 ## Place in the DPMtF Ecosystem
 
@@ -53,12 +54,24 @@ Each repository's own Installation section covers its steps in detail.
 ```text
 DPMtF-LightWorker/
 ├── src/dpmtf_lightworker/
-│   ├── __init__.py
+│   ├── __init__.py            # package + __version__
 │   ├── models.py              # frozen dataclasses for the envelope
 │   ├── envelope_validator.py  # validator + ValidatorConfig
-│   └── errors.py              # five §24 failure categories
-├── tests/unit/
-│   └── test_envelope_validator.py
+│   ├── errors.py              # five §24 failure categories
+│   ├── states.py              # execution state machine
+│   ├── events.py              # structured event stream to Father
+│   ├── config.py              # worker.yaml loading + validation
+│   ├── worker.py              # the poll → claim → execute → report loop
+│   ├── father_client.py       # HTTP client for Father's nine endpoints
+│   ├── allocator.py           # worker-local Model Allocator adapter
+│   ├── client_config.py       # per-role client-config rendering (§9 merge)
+│   ├── git_workspace.py       # disposable worktree isolation
+│   ├── tmux_session.py        # tmux/OpenCode transport
+│   ├── safe_paths.py          # path-confinement guards
+│   └── retention.py           # §12 retention sweeper (hourly, journal-logged)
+├── tests/
+│   ├── fakes.py               # in-memory Father/allocator/tmux fakes
+│   └── unit/                  # 19 test files, 299 tests — no GPU, no network
 ├── pyproject.toml
 ├── .env.example
 └── GOAL.md                    # read-only specification
