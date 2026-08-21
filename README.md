@@ -1,7 +1,10 @@
 # DPMtF-LightWorker
 
-Lightweight remote role-execution node for the DPMtF (Delegated Project
-Management through Father) ecosystem. Each LightWorker receives exactly one
+Lightweight remote role-execution node for the DPMtF ecosystem (DPMtF —
+Deterministic Process Management to Finalisation: a deterministic
+multi-agent process orchestration framework for taking defined work from
+intent to verified finalisation through governed flows, steps, roles,
+harnesses, models, gates, and artifacts). Each LightWorker receives exactly one
 role-execution envelope from DPMtF Father, executes it inside a disposable
 Git worktree under a worker-local Model Allocator, and returns a structured
 result.
